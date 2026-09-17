@@ -30,7 +30,7 @@ export function SettingsPage() {
     queryFn: tenant.get,
   });
 
-  const connected = Boolean(tenantData?.phone_number_id);
+  const connected = Boolean(tenantData?.whatsapp?.connected ?? tenantData?.phone_number_id);
 
   const connectMut = useMutation({
     mutationFn: (data: ConnectForm) => tenant.connectWhatsApp(data),
@@ -89,7 +89,7 @@ export function SettingsPage() {
               <div className="flex flex-col gap-1 sm:flex-row sm:gap-2 items-start">
                 <span className="text-muted-foreground sm:w-36 shrink-0">WhatsApp</span>
                 {connected ? (
-                  <Badge variant="success">Conectado · {tenantData.phone_number_id}</Badge>
+                  <Badge variant="success">Conectado · {tenantData.whatsapp?.phone_number_id ?? tenantData.phone_number_id}</Badge>
                 ) : (
                   <Badge variant="warning">Sin conectar</Badge>
                 )}

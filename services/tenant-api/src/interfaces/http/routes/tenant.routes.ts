@@ -23,12 +23,15 @@ export const tenantRoutes: FastifyPluginAsync<TenantRoutesDeps> = async (fastify
       ok(reply, {
         id: tenant.id,
         name: tenant.name,
+        slug: tenant.slug,
         plan: tenant.plan,
         status: tenant.status,
+        waba_id: tenant.wabaId ?? null,
+        phone_number_id: tenant.phoneNumberId ?? null,
         whatsapp: {
           connected: Boolean(tenant.phoneNumberId),
-          waba_id: tenant.wabaId,
-          phone_number_id: tenant.phoneNumberId,
+          waba_id: tenant.wabaId ?? null,
+          phone_number_id: tenant.phoneNumberId ?? null,
         },
       });
     } catch (err) {
