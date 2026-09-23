@@ -1,4 +1,4 @@
-import type { Flow, FlowNode, FlowWithNodes, NodeType, Transition } from '../models/Flow.js';
+import type { Flow, FlowWithNodes, NodeType, Transition } from '../models/Flow.js';
 
 export interface CreateFlowNodeInput {
   nodeKey: string;

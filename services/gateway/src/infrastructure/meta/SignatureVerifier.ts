@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { SignatureVerificationError } from '../../domain/errors.js';
 
-export const SHA256_PREFIX = 'sha256=' as const;
+export const SHA256_PREFIX = 'sha256=';
 
 /**
  * Verifies the HMAC-SHA256 signature sent by Meta in X-Hub-Signature-256.

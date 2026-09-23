@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import fastifySensible from '@fastify/sensible';
 import fastifyMultipart from '@fastify/multipart';
-import fp from 'fastify-plugin';
 import { ZodError } from 'zod';
 import { Redis } from 'ioredis';
 import { loadConfig } from './config.js';
@@ -216,8 +215,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
 
       // Health checks
-      api.get('/health', async () => ({ status: 'ok' }));
-      api.get('/healthz', async () => ({ status: 'ok' }));
+      api.get('/health', () => ({ status: 'ok' }));
+      api.get('/healthz', () => ({ status: 'ok' }));
       api.get('/readyz', async (_req, reply) => {
         try {
           await redis.ping();
@@ -287,13 +286,20 @@ export async function buildApp(): Promise<FastifyInstance> {
 }
 
 // Entrypoint
-const config = loadConfig();
-const app = await buildApp();
+async function start(): Promise<void> {
+  const config = loadConfig();
+  const app = await buildApp();
 
-try {
-  await app.listen({ port: config.PORT, host: '0.0.0.0' });
-  app.log.info(`Tenant API listening on port ${config.PORT}`);
-} catch (err) {
-  app.log.error(err);
-  process.exit(1);
+  try {
+    await app.listen({ port: config.PORT, host: '0.0.0.0' });
+    app.log.info(`Tenant API listening on port ${config.PORT}`);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
+  }
 }
+
+// An explicit call rather than top-level await: tsconfig.test.json compiles to
+// CommonJS for jest, so this file belongs to a program where top-level await is
+// TS1378. Importing the module still boots the server, exactly as before.
+void start();

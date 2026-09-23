@@ -14,6 +14,9 @@ async function start(): Promise<void> {
 }
 
 start().catch((err: unknown) => {
+  // Startup failed before (or while constructing) the Fastify instance, so
+  // there is no logger to use yet — write straight to stderr.
+  // eslint-disable-next-line no-console
   console.error('Unhandled startup error:', err);
   process.exit(1);
 });

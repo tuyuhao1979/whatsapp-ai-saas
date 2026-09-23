@@ -21,14 +21,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm must be on PATH *before* actions/setup-node runs: its `cache: pnpm`
+      # step shells out to `pnpm store path`, and without pnpm present the action
+      # aborts with "Unable to locate executable file: pnpm" — which skipped every
+      # lint and test step in this workflow.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
           cache-dependency-path: services/gateway/pnpm-lock.yaml
-
-      - name: Enable pnpm
-        run: corepack enable
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -36,11 +41,13 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # `pnpm test -- --coverage` forwarded `--coverage` after `--`, so jest read
+      # it as a filename pattern and exited with "No tests found". The
+      # jest:coverage script passes the flag correctly, and jest.config.js now
+      # carries both the global floor and the 80% application-layer gate that
+      # used to be an inline --coverageThreshold here.
       - name: Test with coverage
-        run: pnpm test -- --coverage
-
-      - name: Coverage gate (80% application layer)
-        run: pnpm exec jest --coverage --coverageThreshold='{"global":{"lines":80}}'
+        run: pnpm test:coverage
 
   tenant-api:
     name: tenant-api — lint + test
@@ -52,14 +59,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # See the gateway job: pnpm must exist before setup-node's cache step.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
           cache-dependency-path: services/tenant-api/pnpm-lock.yaml
-
-      - name: Enable pnpm
-        run: corepack enable
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -67,5 +76,7 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # See the gateway job: `pnpm test -- --coverage` made jest treat
+      # `--coverage` as a test pattern.
       - name: Test with coverage
-        run: pnpm test -- --coverage
+        run: pnpm test:coverage

@@ -9,15 +9,25 @@ import {
 import { sendDomainError } from '../../src/interfaces/http/reply.js';
 import { translatePrismaError } from '../../src/infrastructure/prisma/translatePrismaError.js';
 
-function fakeReply(): { reply: FastifyReply; captured: { status?: number; body?: any } } {
-  const captured: { status?: number; body?: any } = {};
+/** The response envelope every error path in reply.ts writes. */
+interface ErrorEnvelope {
+  data: unknown;
+  error: { code: string; message: string; details?: string[] } | null;
+  meta: { request_id: string };
+}
+
+function fakeReply(): {
+  reply: FastifyReply;
+  captured: { status?: number; body?: ErrorEnvelope };
+} {
+  const captured: { status?: number; body?: ErrorEnvelope } = {};
   const reply = {
     status(code: number) {
       captured.status = code;
       return reply;
     },
     send(body: unknown) {
-      captured.body = body;
+      captured.body = body as ErrorEnvelope;
       return reply;
     },
   } as unknown as FastifyReply;
@@ -72,14 +82,14 @@ describe('sendDomainError', () => {
     const { reply, captured } = fakeReply();
     sendDomainError(reply, { code: 'P2002', meta: { target: ['tenant_id', 'name', 'version'] } });
     expect(captured.status).toBe(409);
-    expect(captured.body.error.code).toBe('CONFLICT');
+    expect(captured.body?.error?.code).toBe('CONFLICT');
   });
 
   it.each([400, 401, 403])('maps a Meta %i rejection to 400', (status: number) => {
     const { reply, captured } = fakeReply();
     sendDomainError(reply, new MetaApiError('Invalid verification code', status));
     expect(captured.status).toBe(400);
-    expect(captured.body.error.message).toBe('Invalid verification code');
+    expect(captured.body?.error?.message).toBe('Invalid verification code');
   });
 
   it.each([500, 503, null])('keeps a Meta %p failure as 502', (status: number | null) => {
@@ -106,13 +116,13 @@ describe('sendDomainError', () => {
     const { reply, captured } = fakeReply();
     sendDomainError(reply, new TypeError("Cannot read properties of undefined (reading 'map')"));
     expect(captured.status).toBe(500);
-    expect(captured.body.error.code).toBe('INTERNAL_ERROR');
-    expect(captured.body.error.message).not.toContain('Cannot read properties');
+    expect(captured.body?.error?.code).toBe('INTERNAL_ERROR');
+    expect(captured.body?.error?.message).not.toContain('Cannot read properties');
   });
 
   it('always returns a request_id', () => {
     const { reply, captured } = fakeReply();
     sendDomainError(reply, new ConflictError('dup'));
-    expect(captured.body.meta.request_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(captured.body?.meta.request_id).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

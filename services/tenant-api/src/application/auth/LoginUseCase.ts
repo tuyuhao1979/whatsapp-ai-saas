@@ -2,7 +2,7 @@ import argon2 from 'argon2';
 import { withTenantContext } from '../../infrastructure/prisma/PrismaClient.js';
 import type { ITenantRepo } from '../../domain/ports/ITenantRepo.js';
 import type { IUserRepo } from '../../domain/ports/IUserRepo.js';
-import { UnauthorizedError, NotFoundError } from '../../domain/errors.js';
+import { UnauthorizedError } from '../../domain/errors.js';
 
 export interface LoginInput {
   email: string;

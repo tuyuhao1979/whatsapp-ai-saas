@@ -28,7 +28,9 @@ export async function healthRoutes(
     '/readyz',
     async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
       try {
-        const pong = await redis.ping();
+        // ioredis' overload set makes `ping()` resolve to `never` here, which
+        // broke the template literal below and made the PONG check dead code.
+        const pong: string = await redis.ping();
         if (pong !== 'PONG') {
           throw new Error(`Unexpected Redis PING response: ${pong}`);
         }

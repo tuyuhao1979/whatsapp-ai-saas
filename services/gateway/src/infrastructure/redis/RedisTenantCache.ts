@@ -10,7 +10,7 @@ export interface IPostgresClient {
   ): Promise<{ rows: R[] }>;
 }
 
-const KEY_PREFIX = 'tenant:by_phone:' as const;
+const KEY_PREFIX = 'tenant:by_phone:';
 
 /**
  * Implements ITenantCache using Redis GET/SET with a Postgres fallback.

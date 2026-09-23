@@ -29,7 +29,8 @@
       "files": ["src/interfaces/http/**/*.ts"],
       "rules": {
         // Fastify plugin factories and route handlers are async by contract,
-        // and decorators they receive are closures rather than methods that
+        // and the interceptors they receive (fastify.authenticate,
+        // fastify.authorize) are decorator closures rather than methods that
         // need `this`. Both rules fire on the framework's idioms, not on bugs.
         "@typescript-eslint/require-await": "off",
         "@typescript-eslint/unbound-method": "off"
@@ -38,9 +39,12 @@
     {
       "files": ["tests/**/*.ts"],
       "rules": {
-        // jest.spyOn/expect(mock.method) reference methods deliberately, and
-        // test doubles are necessarily partially typed.
+        // jest.spyOn/expect(mock.method) reference methods deliberately.
         "@typescript-eslint/unbound-method": "off",
+        // Test doubles are necessarily partially typed: `jest.fn(async () => ...)`
+        // has no await, and hand-built mock objects surface as `any` through
+        // `expect(...).toHaveBeenCalledWith(...)`. Production code keeps these
+        // rules at full strength.
         "@typescript-eslint/require-await": "off",
         "@typescript-eslint/no-unsafe-assignment": "off",
         "@typescript-eslint/no-unsafe-member-access": "off",

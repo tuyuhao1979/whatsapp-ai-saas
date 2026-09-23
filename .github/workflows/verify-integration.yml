@@ -51,21 +51,26 @@ jobs:
       - name: Install Schemathesis
         run: pip install 'schemathesis==4.28.0'
 
-      - name: Build and start the verification stack
-        run: docker compose -f infra/verify/docker-compose.verify.yml up -d --build
-
-      - name: Wait for tenant-api
+      # Pull the base images up front with retries. Shared CI runners hit Docker
+      # Hub anonymous-pull denials intermittently; without this the whole job
+      # dies on a registry hiccup rather than on a real failure. The stack's
+      # minio service is behind the `storage` profile and is not started here.
+      - name: Pre-pull base images
         run: |
-          for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:13001/api/v1/healthz > /dev/null; then
-              echo "tenant-api is healthy"
-              exit 0
-            fi
-            sleep 5
+          for image in postgres:16-alpine redis:7-alpine python:3.12-alpine; do
+            for attempt in 1 2 3; do
+              if docker pull "$image"; then break; fi
+              echo "pull failed for $image (attempt $attempt), retrying in $((attempt * 10))s"
+              sleep $((attempt * 10))
+            done
+            docker image inspect "$image" > /dev/null
           done
-          echo "tenant-api did not become healthy in time"
-          docker compose -f infra/verify/docker-compose.verify.yml ps
-          exit 1
+
+      # Brings the stack up, applies infra/migrations/*.sql in order, and waits
+      # for tenant-api. `docker compose up` on its own leaves an empty database,
+      # so every query would fail with "relation ... does not exist".
+      - name: Start the stack and apply migrations
+        run: bash infra/verify/run-verification.sh
 
       - name: Multi-tenant isolation, RBAC and Meta onboarding
         run: python3 infra/e2e/test_multitenant.py
@@ -91,4 +96,5 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f infra/verify/docker-compose.verify.yml down -v
+        # --profile storage so a profiled service is removed too.
+        run: docker compose -f infra/verify/docker-compose.verify.yml --profile storage down -v

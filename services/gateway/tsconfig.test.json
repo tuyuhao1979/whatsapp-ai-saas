@@ -7,5 +7,11 @@
     "moduleResolution": "Node",
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  // `exclude` is inherited from tsconfig.json, which excludes `tests` — so the
+  // inherited value shadowed the `include` above and no test file belonged to
+  // any project. Type-aware linting then failed with "ESLint was configured to
+  // run on ... using parserOptions.project: however, none of those TSConfigs
+  // include this file".
+  "exclude": ["node_modules", "dist", "dist-test"]
 }

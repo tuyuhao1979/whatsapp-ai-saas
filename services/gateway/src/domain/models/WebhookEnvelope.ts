@@ -29,7 +29,13 @@ export interface MetaMessageItem {
 export interface MetaStatusItem {
   /** Meta message id (wamid) of the message this status refers to. */
   id: string;
-  status: 'sent' | 'delivered' | 'read' | 'failed' | 'deleted' | 'warning' | string;
+  /**
+   * Delivery status. Meta's documented values are sent / delivered / read /
+   * failed / deleted, and it has historically added more without notice, so the
+   * type stays `string` — an enum-plus-`string` union collapses to `string`
+   * anyway and only produced a redundant-union lint error.
+   */
+  status: string;
   timestamp: string;
   recipient_id?: string;
   conversation?: {

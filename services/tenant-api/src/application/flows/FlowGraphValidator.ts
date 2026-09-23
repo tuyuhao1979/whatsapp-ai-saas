@@ -80,7 +80,7 @@ export class FlowGraphValidator {
 
       // Rule 6: condition node — reject dangerous JMESPath expressions
       if (node.type === 'condition') {
-        const expr = (node.config as Record<string, unknown>)['expr'];
+        const expr = node.config['expr'];
         if (typeof expr === 'string') {
           for (const pattern of JMESPATH_INJECTION_PATTERNS) {
             if (pattern.test(expr)) {
@@ -95,7 +95,7 @@ export class FlowGraphValidator {
 
       // Rule 7: api_call node — reject private IP ranges (SSRF prevention)
       if (node.type === 'api_call') {
-        const url = (node.config as Record<string, unknown>)['url'];
+        const url = node.config['url'];
         if (typeof url === 'string') {
           for (const pattern of PRIVATE_IP_PATTERNS) {
             if (pattern.test(url)) {
@@ -110,7 +110,7 @@ export class FlowGraphValidator {
 
       // Rule 8: llm_generate node — max_tokens cap
       if (node.type === 'llm_generate') {
-        const maxTokens = (node.config as Record<string, unknown>)['max_tokens'];
+        const maxTokens = node.config['max_tokens'];
         if (typeof maxTokens === 'number' && maxTokens > MAX_LLM_TOKENS) {
           errors.push(
             `Node '${node.nodeKey}': llm_generate max_tokens (${maxTokens}) exceeds limit of ${MAX_LLM_TOKENS}`,
@@ -120,7 +120,7 @@ export class FlowGraphValidator {
 
       // Rule 9: rag_lookup node — top_k cap
       if (node.type === 'rag_lookup') {
-        const topK = (node.config as Record<string, unknown>)['top_k'];
+        const topK = node.config['top_k'];
         if (typeof topK === 'number' && topK > MAX_RAG_TOP_K) {
           errors.push(
             `Node '${node.nodeKey}': rag_lookup top_k (${topK}) exceeds limit of ${MAX_RAG_TOP_K}`,

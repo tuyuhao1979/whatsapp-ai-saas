@@ -68,8 +68,19 @@ services:
       timeout: 3s
       retries: 20
 
+  # Object storage is opt-in. `docker compose ... up` does NOT start minio:
+  # pulling minio/minio fails on shared CI runners with "pull access denied ...
+  # denied: requested access to the resource is denied", which aborted the whole
+  # verification job before any test ran. Nothing in the security assertions
+  # needs it — KB listing, RLS and cross-tenant isolation are database-only —
+  # and the upstream compose's `minio/mc` bucket-creation step is already absent
+  # here, so uploads could not succeed in this stack anyway.
+  #
+  # Enable it explicitly when you want to exercise the upload path:
+  #   docker compose -f infra/verify/docker-compose.verify.yml --profile storage up -d
   minio:
     image: minio/minio:latest
+    profiles: ["storage"]
     restart: unless-stopped
     ports:
       - "127.0.0.1:19000:9000"
@@ -144,8 +155,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      # minio is deliberately not a dependency: it sits behind the `storage`
+      # profile and cannot be pulled on shared CI runners. The S3 client is
+      # constructed from config without contacting the server, so the API boots
+      # and serves every endpoint the suites assert on.
 
   gateway:
     build:
