@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import socket
 import time
-from typing import Any, Optional
+from typing import Any
 
 import redis
 
@@ -95,7 +95,7 @@ class IndexingConsumer:
 
         # XREADGROUP across all tenant streams
         try:
-            results: Optional[list[Any]] = self._redis.xreadgroup(
+            results: Any = self._redis.xreadgroup(
                 groupname=self.GROUP_NAME,
                 consumername=self.CONSUMER_NAME,
                 streams={k: ">" for k in stream_keys},
@@ -204,7 +204,10 @@ class IndexingConsumer:
                     self.GROUP_NAME,
                     self.CONSUMER_NAME,
                     self.XCLAIM_IDLE_MS,
-                    start="0-0",
+                    # redis-py names this parameter `start_id`; passing `start=`
+                    # raised TypeError on every sweep, which the broad except
+                    # below swallowed, so stuck-message recovery never ran.
+                    start_id="0-0",
                     count=10,
                 )
                 # result = (next_start_id, [(id, fields), ...], [deleted_ids])

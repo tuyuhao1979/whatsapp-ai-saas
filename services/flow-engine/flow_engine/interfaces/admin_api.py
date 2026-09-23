@@ -11,11 +11,11 @@ All endpoints require X-Internal-Token header (shared secret).
 from __future__ import annotations
 
 import logging
-import os
+from datetime import UTC
 from typing import Any
 
 import redis as redis_module
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ class DryRunRequest(BaseModel):
 def dry_run(body: DryRunRequest) -> dict[str, Any]:
     """Execute a flow with a RecordingMetaSendClient and return the trace."""
     import copy
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from flow_engine.domain.models import InboundMessage, Session
     from flow_engine.infrastructure.meta.meta_send_client import RecordingMetaSendClient
@@ -117,7 +117,7 @@ def dry_run(body: DryRunRequest) -> dict[str, Any]:
     dry_executor = copy.copy(executor)
     dry_executor._meta_send = recording_client
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     session = session_repo.load(body.tenant_id, body.simulated_wa_id)
     if session is None:
         session = Session.new(body.tenant_id, body.simulated_wa_id, now)
@@ -153,7 +153,7 @@ def _ping_redis() -> bool:
         return False
     try:
         return client.ping()
-    except Exception:
+    except Exception:  # noqa: BLE001 — a health probe must never raise
         return False
 
 
@@ -163,11 +163,10 @@ def _ping_postgres() -> bool:
         return False
     try:
         import psycopg2
-        with psycopg2.connect(conn_str, connect_timeout=3) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
+        with psycopg2.connect(conn_str, connect_timeout=3) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — a health probe must never raise
         return False
 
 
@@ -178,5 +177,5 @@ def _ping_chromadb() -> bool:
     try:
         retriever._client.heartbeat()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — a health probe must never raise
         return False

@@ -16,7 +16,7 @@ import logging
 import math
 import socket
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import redis
@@ -36,7 +36,6 @@ from flow_engine.domain.ports import (
 )
 from flow_engine.infrastructure.redis.redis_lock import (
     RedisLock,
-    SessionLockError,
     is_processed,
     mark_processed,
 )
@@ -112,7 +111,7 @@ class FlowEngineConsumer:
         self._ensure_groups(stream_keys)
 
         try:
-            results = self._redis.xreadgroup(
+            results: Any = self._redis.xreadgroup(
                 groupname=self.GROUP_NAME,
                 consumername=self.CONSUMER_NAME,
                 streams={k: ">" for k in stream_keys},
@@ -126,7 +125,8 @@ class FlowEngineConsumer:
         if not results:
             return
 
-        for stream_key, messages in results:
+        for stream_entry in results:
+            stream_key, messages = stream_entry
             if isinstance(stream_key, bytes):
                 stream_key = stream_key.decode()
             for message_id, fields in messages:
@@ -276,17 +276,20 @@ class FlowEngineConsumer:
             return
 
         sent_wamids: list[str] = []
+        llm_tokens = 0
         processed_ok = False
         started = time.monotonic()
         try:
             # 4. Load session
             session = self._session_repo.load(msg.tenant_id, msg.wa_id)
             if session is None:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 session = Session.new(msg.tenant_id, msg.wa_id, now)
 
             # 5. Execute
-            sent_wamids = self._executor.execute(msg, session) or []
+            execution = self._executor.execute(msg, session)
+            sent_wamids = list(execution.sent_wamids)
+            llm_tokens = execution.llm_tokens
 
             # 6. Save session
             self._session_repo.save(session)
@@ -294,7 +297,7 @@ class FlowEngineConsumer:
 
             # 7. Write conversation log (inbound turn)
             latency_ms = int((time.monotonic() - started) * 1000)
-            now_str = datetime.now(timezone.utc).isoformat()
+            now_str = datetime.now(UTC).isoformat()
             self._conv_log_repo.write(
                 ConversationTurn(
                     tenant_id=msg.tenant_id,
@@ -304,7 +307,7 @@ class FlowEngineConsumer:
                     message_type=msg.message_type,
                     content=self._build_conv_content(msg, sent_wamids),
                     node_key=session.current_node,
-                    llm_tokens=0,
+                    llm_tokens=llm_tokens,
                     latency_ms=latency_ms,
                     created_at=now_str,
                 )
@@ -366,7 +369,7 @@ class FlowEngineConsumer:
         new_fields = dict(fields)
         new_fields["_lock_retries"] = str(retries)
         try:
-            self._redis.xadd(stream_key, new_fields, maxlen=10_000, approximate=True)
+            self._redis.xadd(stream_key, new_fields, maxlen=10_000, approximate=True)  # type: ignore[arg-type]
         except redis.RedisError:
             logger.exception("Failed to re-enqueue message", extra={"stream": stream_key})
 
@@ -411,7 +414,11 @@ class FlowEngineConsumer:
                     self.GROUP_NAME,
                     self.CONSUMER_NAME,
                     _XCLAIM_IDLE_MS,
-                    start="0-0",
+                    # redis-py names this parameter `start_id`. Passing
+                    # `start=` raised TypeError on every sweep; the broad
+                    # except below swallowed it, so stuck-message recovery
+                    # silently never ran.
+                    start_id="0-0",
                     count=10,
                 )
                 claimed = result[1] if result else []
@@ -529,4 +536,4 @@ def _unix_to_iso(value: Any) -> str | None:
         seconds = int(value)
     except (TypeError, ValueError):
         return None
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(seconds, tz=UTC).isoformat()

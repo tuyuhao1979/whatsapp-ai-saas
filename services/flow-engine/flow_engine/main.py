@@ -32,11 +32,12 @@ from flow_engine.infrastructure.postgres.postgres_flow_repo import PostgresFlowR
 from flow_engine.infrastructure.postgres.postgres_message_status_repo import (
     PostgresMessageStatusRepo,
 )
-from flow_engine.infrastructure.postgres.postgres_tenant_credentials_repo import PostgresTenantCredentialsRepo
+from flow_engine.infrastructure.postgres.postgres_tenant_credentials_repo import (
+    PostgresTenantCredentialsRepo,
+)
 from flow_engine.infrastructure.redis.redis_session_repo import RedisSessionRepo
 from flow_engine.interfaces.admin_api import _state, app
 from flow_engine.interfaces.consumer import FlowEngineConsumer
-
 
 # ---------------------------------------------------------------------------
 # Structured JSON logging
@@ -53,7 +54,7 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        reserved = logging.LogRecord("", 0, "", 0, "", [], None).__dict__.keys()
+        reserved = logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
         for key, value in record.__dict__.items():
             if key not in reserved and not key.startswith("_"):
                 base[key] = value

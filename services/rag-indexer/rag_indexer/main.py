@@ -49,7 +49,7 @@ class _JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         # Merge any extra keys passed via `extra={}`
-        reserved = logging.LogRecord("", 0, "", 0, "", [], None).__dict__.keys()
+        reserved = logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
         for key, value in record.__dict__.items():
             if key not in reserved and not key.startswith("_"):
                 base[key] = value
@@ -108,7 +108,7 @@ def _load_config() -> dict[str, str]:
         config["DATABASE_URL"] = database_url
 
     if missing:
-        print(  # noqa: T201 — logging not yet configured
+        print(
             f"FATAL: missing required environment variables: {', '.join(missing)}",
             file=sys.stderr,
         )

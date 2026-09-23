@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 _REQUIRED = [
     "REDIS_URL",
@@ -58,7 +58,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     if database_url is None:
         missing.append("DATABASE_URL (or POSTGRES_URL)")
     if missing:
-        print(  # noqa: T201
+        print(
             f"FATAL: missing required environment variables: {', '.join(missing)}",
             file=sys.stderr,
         )
@@ -68,7 +68,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
 
     mode = source.get("MODE", "both").strip().lower()
     if mode not in ("both", "consumer", "admin"):
-        print(  # noqa: T201
+        print(
             f"FATAL: MODE must be one of both|consumer|admin, got {mode!r}",
             file=sys.stderr,
         )

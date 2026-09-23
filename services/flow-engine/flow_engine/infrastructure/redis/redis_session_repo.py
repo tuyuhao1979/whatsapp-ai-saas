@@ -7,6 +7,7 @@ TTL: 86400 seconds (24h), refreshed on every write.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import redis
 
@@ -28,7 +29,7 @@ class RedisSessionRepo(ISessionRepo):
     def load(self, tenant_id: str, wa_id: str) -> Session | None:
         key = self._key(tenant_id, wa_id)
         try:
-            data: dict[bytes, bytes] = self._redis.hgetall(key)
+            data: dict[Any, Any] = self._redis.hgetall(key)
         except redis.RedisError:
             logger.exception("Redis HGETALL failed", extra={"key": key})
             return None
@@ -54,7 +55,7 @@ class RedisSessionRepo(ISessionRepo):
         fields = session.to_hash()
         try:
             pipe = self._redis.pipeline()
-            pipe.hset(key, mapping=fields)
+            pipe.hset(key, mapping=fields)  # type: ignore[arg-type]  # redis-py accepts str mappings at runtime
             pipe.expire(key, _TTL_SECONDS)
             pipe.execute()
         except redis.RedisError:

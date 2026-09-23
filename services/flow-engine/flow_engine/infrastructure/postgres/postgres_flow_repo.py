@@ -59,56 +59,55 @@ class PostgresFlowRepo(IFlowRepo):
     def _load_from_db(self, tenant_id: str) -> list[Flow]:
         flows_map: dict[str, Flow] = {}
 
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                # RLS context (transaction-local)
-                cur.execute(
-                    "SELECT set_config('app.tenant_id', %s, true)", (tenant_id,)
-                )
+        with self._connect() as conn, conn.cursor() as cur:
+            # RLS context (transaction-local)
+            cur.execute(
+                "SELECT set_config('app.tenant_id', %s, true)", (tenant_id,)
+            )
 
-                # Load flows. Column names per infra/migrations/002_create_flows.sql:
-                # trigger (JSONB), entry_node (TEXT referencing flow_nodes.node_key)
-                cur.execute(
-                    """
+            # Load flows. Column names per infra/migrations/002_create_flows.sql:
+            # trigger (JSONB), entry_node (TEXT referencing flow_nodes.node_key)
+            cur.execute(
+                """
                     SELECT id, name, trigger, entry_node
                       FROM flows
                      WHERE tenant_id = %s
                        AND is_active = true
                     """,
-                    (tenant_id,),
+                (tenant_id,),
+            )
+            flow_rows = cur.fetchall()
+
+            for row in flow_rows:
+                flow_id: str = str(row["id"])
+                trigger: dict[str, Any] = row["trigger"] or {}
+                flows_map[flow_id] = Flow(
+                    id=flow_id,
+                    tenant_id=tenant_id,
+                    name=row["name"],
+                    trigger=trigger,
+                    entry_node=str(row["entry_node"] or ""),
+                    nodes={},
+                    is_active=True,
                 )
-                flow_rows = cur.fetchall()
 
-                for row in flow_rows:
-                    flow_id: str = str(row["id"])
-                    trigger: dict[str, Any] = row["trigger"] or {}
-                    flows_map[flow_id] = Flow(
-                        id=flow_id,
-                        tenant_id=tenant_id,
-                        name=row["name"],
-                        trigger=trigger,
-                        entry_node=str(row["entry_node"] or ""),
-                        nodes={},
-                        is_active=True,
-                    )
+            if not flows_map:
+                return []
 
-                if not flows_map:
-                    return []
-
-                # Load flow_nodes for all active flows. Column `type` (not
-                # node_type) and `node_key` (not id) — the node key is what
-                # session.current_node and conversation_logs.node_key store.
-                flow_ids = list(flows_map.keys())
-                placeholders = ",".join(["%s"] * len(flow_ids))
-                cur.execute(
-                    f"""
+            # Load flow_nodes for all active flows. Column `type` (not
+            # node_type) and `node_key` (not id) — the node key is what
+            # session.current_node and conversation_logs.node_key store.
+            flow_ids = list(flows_map.keys())
+            placeholders = ",".join(["%s"] * len(flow_ids))
+            cur.execute(
+                f"""
                     SELECT flow_id, node_key, type, config, transitions
                       FROM flow_nodes
                      WHERE flow_id IN ({placeholders})
                     """,
-                    flow_ids,
-                )
-                node_rows = cur.fetchall()
+                flow_ids,
+            )
+            node_rows = cur.fetchall()
 
         for row in node_rows:
             flow_id = str(row["flow_id"])

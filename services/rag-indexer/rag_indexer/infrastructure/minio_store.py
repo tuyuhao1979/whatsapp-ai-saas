@@ -1,7 +1,6 @@
 """MinIO adapter: implements IDocumentStore via the minio Python package."""
 from __future__ import annotations
 
-import io
 import logging
 from urllib.parse import urlparse
 

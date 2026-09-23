@@ -7,18 +7,36 @@ which is persisted to Redis after every execution.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from flow_engine.application.node_executors import ExecutorDeps, NodeResult, execute_node
+from flow_engine.application.node_executors import (
+    ExecutorDeps,
+    NodeResult,
+    execute_node,
+)
 from flow_engine.application.trigger_matcher import match_trigger
 from flow_engine.domain.errors import MaxIterationsError, NodeExecutionError
-from flow_engine.domain.models import Flow, FlowNode, InboundMessage, Session
-from flow_engine.domain.ports import IConvLogRepo, IFlowRepo, ILLMPort, IMetaSendPort, IVectorStore
+from flow_engine.domain.models import Flow, InboundMessage, Session
+from flow_engine.domain.ports import (
+    IConvLogRepo,
+    IFlowRepo,
+    ILLMPort,
+    IMetaSendPort,
+    IVectorStore,
+)
 
 logger = logging.getLogger(__name__)
 
 _MAX_ITERATIONS = 20
+
+
+@dataclass
+class ExecutionResult:
+    """Telemetry from handling one inbound message."""
+
+    sent_wamids: list[str] = field(default_factory=list)
+    llm_tokens: int = 0
 
 
 class FlowExecutor:
@@ -40,14 +58,18 @@ class FlowExecutor:
         # Meta message ids of everything sent during the current execution,
         # so the consumer can persist them and correlate status callbacks.
         self._sent_wamids: list[str] = []
+        # LLM tokens consumed during the current execution.
+        self._llm_tokens: int = 0
 
-    def execute(self, message: InboundMessage, session: Session) -> list[str]:
+    def execute(self, message: InboundMessage, session: Session) -> ExecutionResult:
         """Process one inbound message, mutating *session* in place.
 
         Returns the Meta message ids (wamids) of every outbound message sent
-        while handling this inbound message.
+        while handling this inbound message, plus the LLM tokens consumed (which
+        the consumer persists on the conversation log).
         """
         self._sent_wamids = []
+        self._llm_tokens = 0
         now = _now_iso()
 
         # Append user turn to history (cap at 10)
@@ -89,7 +111,10 @@ class FlowExecutor:
             session.state = "ERROR"
 
         session.last_msg_at = _now_iso()
-        return self._sent_wamids
+        return ExecutionResult(
+            sent_wamids=list(self._sent_wamids),
+            llm_tokens=self._llm_tokens,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -114,12 +139,16 @@ class FlowExecutor:
 
         node = flow.nodes.get(session.current_node or "")
         if node is None:
-            logger.warning("Current node not found — resetting", extra={"node": session.current_node})
+            logger.warning(
+                "Current node not found — resetting",
+                extra={"node": session.current_node},
+            )
             _reset_flow_state(session)
             return
 
         result = execute_node(node, session, message.text, deps)
-        self._record_sent(_apply_result(session, result))
+        _apply_result(session, result)
+        self._record_result(result.sent_wamid, result.llm_tokens)
         self._log_assistant_turn(session, result, message)
 
         if not result.requires_user_input and not result.done:
@@ -153,14 +182,15 @@ class FlowExecutor:
         message: InboundMessage,
     ) -> None:
         """Advance through non-waiting nodes until a wait or end is hit."""
-        for iteration in range(_MAX_ITERATIONS):
+        for _iteration in range(_MAX_ITERATIONS):
             node = flow.nodes.get(session.current_node or "")
             if node is None:
                 _reset_flow_state(session)
                 return
 
             result = execute_node(node, session, trigger_text, deps)
-            self._record_sent(_apply_result(session, result))
+            _apply_result(session, result)
+            self._record_result(result.sent_wamid, result.llm_tokens)
             self._log_assistant_turn(session, result, message)
 
             # Clear trigger text after first node — subsequent nodes are automatic
@@ -209,7 +239,7 @@ class FlowExecutor:
             text=reply_text,
             access_token=message.access_token,
         )
-        self._record_sent(sent_wamid)
+        self._record_result(sent_wamid, tokens)
 
         session.history.append({"role": "assistant", "content": reply_text, "ts": _now_iso()})
         if len(session.history) > 10:
@@ -217,10 +247,11 @@ class FlowExecutor:
 
         session.state = "IDLE"
 
-    def _record_sent(self, wamid: str | None) -> None:
-        """Record the Meta message id of an outbound message."""
+    def _record_result(self, wamid: str | None, llm_tokens: int) -> None:
+        """Accumulate per-execution telemetry: sent wamids and LLM tokens."""
         if wamid:
             self._sent_wamids.append(wamid)
+        self._llm_tokens += llm_tokens
 
     def _log_assistant_turn(
         self,
@@ -257,17 +288,12 @@ def _reset_flow_state(session: Session) -> None:
     session.retry_count = 0
 
 
-def _apply_result(session: Session, result: NodeResult) -> str | None:
-    """Apply NodeResult mutations to the session.
-
-    Returns the Meta message id of any message sent by the node, so the caller
-    can record it for delivery-status correlation.
-    """
+def _apply_result(session: Session, result: NodeResult) -> None:
+    """Apply NodeResult mutations to the session."""
     session.slots.update(result.slot_updates)
     if result.next_node:
         session.current_node = result.next_node
-    return result.sent_wamid
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

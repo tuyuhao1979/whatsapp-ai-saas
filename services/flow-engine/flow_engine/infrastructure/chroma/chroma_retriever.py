@@ -34,8 +34,9 @@ class ChromaRetriever(IVectorStore):
         collection_name = f"tenant_{tenant_id.replace('-', '')}"
         try:
             collection = self._client.get_collection(collection_name)
-        except Exception:
-            # Collection doesn't exist for this tenant yet
+        except Exception:  # noqa: BLE001 — Chroma raises unrelated types for a
+            # missing collection; the intended behaviour is "no KB yet" -> no
+            # RAG context, never a failed reply.
             logger.debug(
                 "No ChromaDB collection for tenant",
                 extra={"tenant_id": tenant_id, "collection": collection_name},
@@ -61,4 +62,7 @@ class ChromaRetriever(IVectorStore):
         distances: list[float] = results["distances"][0] if results.get("distances") else []
 
         # Convert cosine distance [0, 2] to similarity score [0, 1]
-        return [(doc, max(0.0, 1.0 - dist)) for doc, dist in zip(docs, distances)]
+        return [
+            (doc, max(0.0, 1.0 - dist))
+            for doc, dist in zip(docs, distances, strict=False)
+        ]

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flow_engine.domain.models import Session
 from flow_engine.domain.ports import ISessionRepo
@@ -42,4 +42,4 @@ class SessionService:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

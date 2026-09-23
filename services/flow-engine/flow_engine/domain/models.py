@@ -20,7 +20,7 @@ class Session:
     last_msg_at: str  # ISO datetime
 
     @classmethod
-    def new(cls, tenant_id: str, wa_id: str, now: str) -> "Session":
+    def new(cls, tenant_id: str, wa_id: str, now: str) -> Session:
         return cls(
             tenant_id=tenant_id,
             wa_id=wa_id,
@@ -50,7 +50,7 @@ class Session:
         }
 
     @classmethod
-    def from_hash(cls, data: dict[str, str]) -> "Session":
+    def from_hash(cls, data: dict[str, str]) -> Session:
         """Deserialize from Redis Hash fields."""
         return cls(
             tenant_id=data["tenant_id"],
@@ -133,9 +133,7 @@ class InboundMessage:
     message_type: str = "text"
 
     @classmethod
-    def from_stream_fields(cls, fields: dict[str, str]) -> "InboundMessage":
-        import json as _json
-        payload = _json.loads(fields.get("payload", "{}"))
+    def from_stream_fields(cls, fields: dict[str, str]) -> InboundMessage:
         return cls(
             message_id=fields["message_id"],
             tenant_id=fields["tenant_id"],

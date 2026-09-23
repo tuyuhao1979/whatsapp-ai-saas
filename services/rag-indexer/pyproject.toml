@@ -32,6 +32,46 @@ rag-indexer = "rag_indexer.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["rag_indexer"]
 
+[tool.ruff]
+# Pinned explicitly: ruff's default rule set has grown over time, so an
+# unpinned `ruff check` silently became stricter and turned CI red without any
+# code change. Selecting the families below (and the target version) keeps the
+# intent stable across ruff releases.
+target-version = "py312"
+line-length = 100
+src = ["rag_indexer"]
+
+[tool.ruff.lint]
+# Scope is deliberate, not a relaxation of defaults. ruff's *default* set has
+# grown across releases, so an unpinned `ruff check` silently became stricter
+# and turned CI red without any code change — the target version and rule
+# families are pinned here so intent stays stable.
+#
+# Selected because they catch mistakes: E/W, F, I, UP, B, BLE, PYI, RUF.
+# Deliberately NOT selected: SIM and TRY (refactoring opinions, no defect signal
+# on this codebase).
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "BLE",  # blind except
+    "RUF",  # ruff-specific
+    "PYI",  # typing stubs conventions
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on failure modes and use long literals on purpose.
+"tests/**" = ["B", "BLE"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = [

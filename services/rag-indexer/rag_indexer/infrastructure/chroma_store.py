@@ -67,8 +67,8 @@ class ChromaVectorStore(IVectorStore):
                 "ChromaDB delete complete",
                 extra={"collection": collection_name, "document_id": document_id},
             )
-        except Exception:
-            # Collection may not exist yet — that is fine
+        except Exception:  # noqa: BLE001 — the collection may simply not exist
+            # yet; deletion is idempotent and must not fail the job.
             logger.debug(
                 "ChromaDB delete skipped (collection not found)",
                 extra={"collection": collection_name},

@@ -18,6 +18,7 @@ Or:
 from __future__ import annotations
 
 import logging
+from typing import Self
 
 import redis
 
@@ -68,7 +69,7 @@ class RedisLock:
             finally:
                 self._acquired = False
 
-    def __enter__(self) -> "RedisLock":
+    def __enter__(self) -> Self:
         if not self.acquire():
             raise SessionLockError(self._tenant_id, self._wa_id)
         return self

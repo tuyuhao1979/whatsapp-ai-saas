@@ -154,6 +154,8 @@ def _sleep_backoff(base_s: float, attempt: int, retry_after: str | None = None) 
         try:
             delay = max(delay, float(retry_after))
         except (TypeError, ValueError):
+            # A malformed Retry-After must not fail the send; fall back to the
+            # computed backoff.
             pass
     time.sleep(min(delay, 30.0))
 

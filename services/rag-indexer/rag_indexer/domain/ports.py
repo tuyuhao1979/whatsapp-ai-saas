@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import abc
-from typing import Optional
 
 from rag_indexer.domain.models import DocumentChunk
 
@@ -38,7 +37,7 @@ class IStatusRepo(abc.ABC):
     """Port for reading and writing document indexing status in Postgres."""
 
     @abc.abstractmethod
-    def get_status(self, tenant_id: str, document_id: str) -> Optional[str]:
+    def get_status(self, tenant_id: str, document_id: str) -> str | None:
         """Return current status string or None if document not found."""
 
     @abc.abstractmethod

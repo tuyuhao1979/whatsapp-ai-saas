@@ -6,6 +6,9 @@ import json
 import logging
 import re
 import signal
+from collections.abc import Callable
+from types import FrameType
+from typing import Any
 
 from rag_indexer.domain.models import DocumentChunk, IndexingJob
 from rag_indexer.domain.ports import IDocumentStore, IStatusRepo, IVectorStore
@@ -58,6 +61,10 @@ def _extract_text_faq_json(raw: bytes) -> str:
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid FAQ JSON: {exc}") from exc
     if not isinstance(items, list):
+        # ValueError, not TypeError: the indexing pipeline maps ValueError to a
+        # permanent "document failed" status, which is the right outcome for
+        # malformed input. A TypeError would escape as a transient error and be
+        # retried until the poison-message budget ran out.
         raise ValueError("FAQ JSON must be a list of {question, answer} objects")
     parts: list[str] = []
     for item in items:
@@ -181,7 +188,7 @@ class _TimeoutError(Exception):
     pass
 
 
-def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+def _timeout_handler(signum: int, frame: object) -> None:
     raise _TimeoutError("Indexing operation timed out after 10 minutes")
 
 
@@ -215,8 +222,11 @@ class IndexDocumentUseCase:
             )
             return
 
-        # Install per-operation timeout via SIGALRM (Unix only)
-        old_handler: object = None
+        # Install per-operation timeout via SIGALRM (Unix only).
+        # signal.signal returns the previous handler, whose type is the union
+        # signal.Handlers | Callable | int | None. It is stored as the same
+        # union so it can be handed straight back to signal.signal.
+        old_handler: signal.Handlers | Callable[[int, FrameType | None], Any] | int | None = None
         try:
             old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(_OPERATION_TIMEOUT_SECONDS)

@@ -7,6 +7,7 @@ import time
 import psycopg2
 import psycopg2.extras
 
+from flow_engine.domain.ports import ITenantCredentialsRepo
 from flow_engine.infrastructure.crypto import decrypt_aes256_gcm
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 _CACHE_TTL_S = 300.0
 
 
-class PostgresTenantCredentialsRepo:
+class PostgresTenantCredentialsRepo(ITenantCredentialsRepo):
     def __init__(self, connection_string: str, master_key: str) -> None:
         self._conn_string = connection_string
         self._master_key = master_key
@@ -33,10 +34,9 @@ class PostgresTenantCredentialsRepo:
         if cached is not None and cached[0] > now:
             return cached[1]
 
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
                     SELECT access_token
                       FROM tenants
                      WHERE id = %s
@@ -44,9 +44,9 @@ class PostgresTenantCredentialsRepo:
                        AND access_token IS NOT NULL
                      LIMIT 1
                     """,
-                    (tenant_id, phone_number_id),
-                )
-                row = cur.fetchone()
+                (tenant_id, phone_number_id),
+            )
+            row = cur.fetchone()
 
         if not row:
             logger.warning(
