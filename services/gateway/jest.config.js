@@ -28,20 +28,18 @@ export default {
   // of slack so unrelated churn does not redden CI. The infrastructure adapters
   // (pg pool, Redis cache/queue) need live services and are exercised by the
   // isolated-stack job instead.
+  //
+  // Deliberately no path-keyed entries here: mixing a `./src/...` key with
+  // `global` made jest evaluate the global threshold against a different file
+  // set in CI than the one printed in the table (it reported 50.4% statements
+  // against a 58.2% table). The application-layer 80% gate lives in the
+  // workflow instead, scoped with --collectCoverageFrom.
   coverageThreshold: {
     global: {
       branches: 55,
       functions: 55,
       lines: 55,
       statements: 55,
-    },
-    // The gate the workflow used to pass inline on the command line
-    // (--coverageThreshold '{"global":{"lines":80}}'), kept but scoped to the
-    // application layer it was meant to describe: that directory sits at
-    // 91.2% lines, the whole service at 58.6%.
-    './src/application/': {
-      lines: 80,
-      statements: 80,
     },
   },
 };
