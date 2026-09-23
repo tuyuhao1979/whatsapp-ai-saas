@@ -1,4 +1,5 @@
 import argon2 from 'argon2';
+import { withTenantContext } from '../../infrastructure/prisma/PrismaClient.js';
 import type { ITenantRepo } from '../../domain/ports/ITenantRepo.js';
 import type { IUserRepo } from '../../domain/ports/IUserRepo.js';
 import { UnauthorizedError, NotFoundError } from '../../domain/errors.js';
@@ -28,7 +29,13 @@ export class LoginUseCase {
       throw new UnauthorizedError('Invalid credentials');
     }
 
-    const user = await this.userRepo.findByEmailAndTenant(input.email, tenant.id);
+    // `users` is a tenant-scoped table under FORCE ROW LEVEL SECURITY, and an
+    // unauthenticated request has no tenant context, so the lookup must run
+    // inside an explicitly established context or RLS denies every row and
+    // login can never succeed (audit finding B4).
+    const user = await withTenantContext(tenant.id, () =>
+      this.userRepo.findByEmailAndTenant(input.email, tenant.id),
+    );
     if (!user) {
       throw new UnauthorizedError('Invalid credentials');
     }

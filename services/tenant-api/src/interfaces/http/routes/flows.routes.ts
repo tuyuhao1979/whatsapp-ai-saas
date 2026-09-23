@@ -18,6 +18,10 @@ interface FlowRoutesDeps {
 export const flowsRoutes: FastifyPluginAsync<FlowRoutesDeps> = async (fastify, opts) => {
   fastify.addHook('preHandler', fastify.authenticate);
 
+  // Mutations require owner/admin (audit finding H5: a viewer could previously
+  // create, activate, rewrite and delete flows).
+  const ownerOrAdmin = [fastify.authorize('owner', 'admin')];
+
   /** GET /api/v1/flows */
   fastify.get('/', async (request, reply) => {
     try {
@@ -48,7 +52,7 @@ export const flowsRoutes: FastifyPluginAsync<FlowRoutesDeps> = async (fastify, o
         transitions: Array<{ next: string; condition?: string }>;
       }>;
     };
-  }>('/', async (request, reply) => {
+  }>('/', { preHandler: ownerOrAdmin }, async (request, reply) => {
     try {
       const flow = await opts.createFlowUseCase.execute(request.tenantId, {
         name: request.body.name,
@@ -93,7 +97,7 @@ export const flowsRoutes: FastifyPluginAsync<FlowRoutesDeps> = async (fastify, o
         transitions: Array<{ next: string; condition?: string }>;
       }>;
     };
-  }>('/:id', async (request, reply) => {
+  }>('/:id', { preHandler: ownerOrAdmin }, async (request, reply) => {
     try {
       const body = request.body;
       const flow = await opts.updateFlowUseCase.execute(
@@ -119,22 +123,30 @@ export const flowsRoutes: FastifyPluginAsync<FlowRoutesDeps> = async (fastify, o
   });
 
   /** POST /api/v1/flows/:id/activate */
-  fastify.post<{ Params: { id: string } }>('/:id/activate', async (request, reply) => {
-    try {
-      const flow = await opts.activateFlowUseCase.execute(request.tenantId, request.params.id);
-      ok(reply, { id: flow.id, is_active: flow.isActive });
-    } catch (err) {
-      sendDomainError(reply, err);
-    }
-  });
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/activate',
+    { preHandler: ownerOrAdmin },
+    async (request, reply) => {
+      try {
+        const flow = await opts.activateFlowUseCase.execute(request.tenantId, request.params.id);
+        ok(reply, { id: flow.id, is_active: flow.isActive });
+      } catch (err) {
+        sendDomainError(reply, err);
+      }
+    },
+  );
 
   /** DELETE /api/v1/flows/:id */
-  fastify.delete<{ Params: { id: string } }>('/:id', async (request, reply) => {
-    try {
-      await opts.deleteFlowUseCase.execute(request.tenantId, request.params.id);
-      ok(reply, null, 204);
-    } catch (err) {
-      sendDomainError(reply, err);
-    }
-  });
+  fastify.delete<{ Params: { id: string } }>(
+    '/:id',
+    { preHandler: ownerOrAdmin },
+    async (request, reply) => {
+      try {
+        await opts.deleteFlowUseCase.execute(request.tenantId, request.params.id);
+        ok(reply, null, 204);
+      } catch (err) {
+        sendDomainError(reply, err);
+      }
+    },
+  );
 };

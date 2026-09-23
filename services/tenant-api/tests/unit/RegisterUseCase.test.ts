@@ -9,8 +9,9 @@ function makeFakeTenantRepo(overrides: Partial<ITenantRepo> = {}): ITenantRepo {
   return {
     findById: jest.fn().mockResolvedValue(null),
     findBySlug: jest.fn().mockResolvedValue(null),
+    findByPhoneNumberId: jest.fn().mockResolvedValue(null),
     create: jest.fn().mockResolvedValue({
-      id: 'tenant-uuid',
+      id: '11111111-1111-4111-8111-111111111111',
       name: 'Acme',
       slug: 'acme',
       wabaId: null,
@@ -32,7 +33,7 @@ function makeFakeUserRepo(overrides: Partial<IUserRepo> = {}): IUserRepo {
     findByEmailAndTenant: jest.fn().mockResolvedValue(null),
     create: jest.fn().mockResolvedValue({
       id: 'user-uuid',
-      tenantId: 'tenant-uuid',
+      tenantId: '11111111-1111-4111-8111-111111111111',
       email: 'owner@acme.com',
       passwordHash: 'hashed',
       role: 'owner',
@@ -54,7 +55,10 @@ describe('RegisterUseCase', () => {
       password: 'securepassword123',
     });
 
-    expect(result).toMatchObject({ tenantId: 'tenant-uuid', userId: 'user-uuid' });
+    expect(result).toMatchObject({
+      tenantId: '11111111-1111-4111-8111-111111111111',
+      userId: 'user-uuid',
+    });
     expect(tenantRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Acme Corp', slug: 'acme-corp' }),
     );
@@ -69,8 +73,12 @@ describe('RegisterUseCase', () => {
     });
     const useCase = new RegisterUseCase(tenantRepo, makeFakeUserRepo());
 
+    // NOTE: upstream this test used an 11-character password, so the
+    // "at least 12 characters" guard fired first and the assertion below never
+    // exercised the slug-conflict branch. The suite could not load at all
+    // before (see jest.config.js), which is why the staleness went unnoticed.
     await expect(
-      useCase.execute({ tenantName: 'Acme', email: 'a@b.com', password: 'password123' }),
+      useCase.execute({ tenantName: 'Acme', email: 'a@b.com', password: 'password1234' }),
     ).rejects.toThrow(ConflictError);
   });
 

@@ -1,4 +1,5 @@
 import argon2 from 'argon2';
+import { withTenantContext } from '../../infrastructure/prisma/PrismaClient.js';
 import type { ITenantRepo } from '../../domain/ports/ITenantRepo.js';
 import type { IUserRepo } from '../../domain/ports/IUserRepo.js';
 import { ConflictError, ValidationError } from '../../domain/errors.js';
@@ -53,12 +54,18 @@ export class RegisterUseCase {
     });
 
     const tenant = await this.tenantRepo.create({ name: input.tenantName, slug });
-    const user = await this.userRepo.create({
-      tenantId: tenant.id,
-      email: input.email,
-      passwordHash,
-      role: 'owner',
-    });
+
+    // `users` is under FORCE ROW LEVEL SECURITY and this request has no tenant
+    // context yet, so the INSERT must run inside the freshly created tenant's
+    // context or the policy rejects the new row (audit finding B4).
+    const user = await withTenantContext(tenant.id, () =>
+      this.userRepo.create({
+        tenantId: tenant.id,
+        email: input.email,
+        passwordHash,
+        role: 'owner',
+      }),
+    );
 
     return { tenantId: tenant.id, userId: user.id };
   }

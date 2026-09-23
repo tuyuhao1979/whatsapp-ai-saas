@@ -37,7 +37,7 @@ user flow_engine_user on >${REDIS_FLOW_ENGINE_PASSWORD} \
 #                   auth blocklist, rate limiting writes
 user tenant_api_user on >${REDIS_TENANT_API_PASSWORD} \
   +xadd +set +setex +del +get +ping \
-  ~tenant:by_phone:* ~indexing:* ~auth:blocklist:* ~rate:tenant:*
+  ~tenant:by_phone:* ~indexing:* ~auth:blocklist:* ~rate:tenant:* ~oauth:meta:state:*
 
 # rag_indexer_user
 # Responsibilities: consume indexing streams

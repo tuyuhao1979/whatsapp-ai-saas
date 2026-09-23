@@ -6,5 +6,14 @@
     "gateway": "pnpm --dir services/gateway",
     "tenant-api": "pnpm --dir services/tenant-api",
     "dashboard": "pnpm --dir services/dashboard"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "argon2",
+      "esbuild",
+      "prisma"
+    ]
   }
 }

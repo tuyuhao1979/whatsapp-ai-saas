@@ -13,11 +13,16 @@ import { PrismaConvLogRepo } from './infrastructure/prisma/PrismaConvLogRepo.js'
 import { MinioStorageAdapter } from './infrastructure/storage/MinioStorageAdapter.js';
 import { RedisIndexingQueue } from './infrastructure/redis/RedisIndexingQueue.js';
 import { FlowEngineHttpClient } from './infrastructure/flowengine/FlowEngineHttpClient.js';
+import { MetaGraphClient } from './infrastructure/meta/MetaGraphClient.js';
+import { RedisOAuthStateStore } from './infrastructure/redis/RedisOAuthStateStore.js';
 import { RegisterUseCase } from './application/auth/RegisterUseCase.js';
 import { LoginUseCase } from './application/auth/LoginUseCase.js';
 import { GetTenantUseCase } from './application/tenant/GetTenantUseCase.js';
 import { UpdateTenantUseCase } from './application/tenant/UpdateTenantUseCase.js';
 import { ConnectWhatsAppUseCase } from './application/tenant/ConnectWhatsAppUseCase.js';
+import { StartMetaOnboardingUseCase } from './application/tenant/StartMetaOnboardingUseCase.js';
+import { CompleteMetaOnboardingUseCase } from './application/tenant/CompleteMetaOnboardingUseCase.js';
+import { CheckMetaConnectionUseCase } from './application/tenant/CheckMetaConnectionUseCase.js';
 import { CreateFlowUseCase } from './application/flows/CreateFlowUseCase.js';
 import { UpdateFlowUseCase } from './application/flows/UpdateFlowUseCase.js';
 import { ActivateFlowUseCase } from './application/flows/ActivateFlowUseCase.js';
@@ -29,9 +34,11 @@ import { DeleteDocumentUseCase } from './application/kb/DeleteDocumentUseCase.js
 import { ListConversationsUseCase } from './application/conversations/ListConversationsUseCase.js';
 import { DryRunUseCase } from './application/dryrun/DryRunUseCase.js';
 import { authPlugin } from './interfaces/http/plugins/authPlugin.js';
+import { authorizePlugin } from './interfaces/http/plugins/authorizePlugin.js';
 import { rlsPlugin } from './interfaces/http/plugins/rlsPlugin.js';
 import { authRoutes } from './interfaces/http/routes/auth.routes.js';
 import { tenantRoutes } from './interfaces/http/routes/tenant.routes.js';
+import { metaRoutes } from './interfaces/http/routes/meta.routes.js';
 import { flowsRoutes } from './interfaces/http/routes/flows.routes.js';
 import { kbRoutes } from './interfaces/http/routes/kb.routes.js';
 import { conversationsRoutes } from './interfaces/http/routes/conversations.routes.js';
@@ -57,6 +64,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Auth plugin (registers JWT)
   await app.register(authPlugin, { config });
+
+  // RBAC plugin (consumes the role claim the auth plugin binds)
+  await app.register(authorizePlugin);
 
   // RLS plugin (sets AsyncLocalStorage per request)
   await app.register(rlsPlugin);
@@ -90,6 +100,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     config.DRY_RUN_TIMEOUT_MS,
   );
 
+  // Meta Graph API adapter for onboarding / ownership verification.
+  const metaClient = new MetaGraphClient({
+    baseUrl: config.META_API_BASE,
+    appId: config.META_APP_ID,
+    appSecret: config.META_APP_SECRET,
+    timeoutMs: config.META_HTTP_TIMEOUT_MS,
+  });
+
+  const oauthStateStore = new RedisOAuthStateStore(redis, config.OAUTH_STATE_TTL_SECONDS);
+
+  const embeddedSignupAvailable = Boolean(config.META_APP_ID && config.META_CONFIG_ID);
+
   // ---------------------------------------------------------------------------
   // Use cases
   // ---------------------------------------------------------------------------
@@ -97,7 +119,28 @@ export async function buildApp(): Promise<FastifyInstance> {
   const loginUseCase = new LoginUseCase(tenantRepo, userRepo);
   const getTenantUseCase = new GetTenantUseCase(tenantRepo);
   const updateTenantUseCase = new UpdateTenantUseCase(tenantRepo);
-  const connectWhatsAppUseCase = new ConnectWhatsAppUseCase(tenantRepo, config.MASTER_KEY);
+  const connectWhatsAppUseCase = new ConnectWhatsAppUseCase(tenantRepo, metaClient, {
+    masterKey: config.MASTER_KEY,
+    requireOwnershipProof: config.META_REQUIRE_OWNERSHIP_PROOF,
+    expectedAppId: config.META_APP_ID || null,
+  });
+  const startMetaOnboardingUseCase = new StartMetaOnboardingUseCase(oauthStateStore, {
+    appId: config.META_APP_ID,
+    configId: config.META_CONFIG_ID,
+    redirectUri: config.META_EMBEDDED_SIGNUP_REDIRECT_URI,
+    stateTtlSeconds: config.OAUTH_STATE_TTL_SECONDS,
+  });
+  const completeMetaOnboardingUseCase = new CompleteMetaOnboardingUseCase(
+    oauthStateStore,
+    metaClient,
+    connectWhatsAppUseCase,
+  );
+  const checkMetaConnectionUseCase = new CheckMetaConnectionUseCase(
+    tenantRepo,
+    metaClient,
+    config.MASTER_KEY,
+    config.META_APP_ID,
+  );
   const createFlowUseCase = new CreateFlowUseCase(flowRepo, flowEngineClient);
   const updateFlowUseCase = new UpdateFlowUseCase(flowRepo, flowEngineClient);
   const activateFlowUseCase = new ActivateFlowUseCase(flowRepo, flowEngineClient);
@@ -132,6 +175,14 @@ export async function buildApp(): Promise<FastifyInstance> {
         getTenantUseCase,
         updateTenantUseCase,
         connectWhatsAppUseCase,
+      });
+
+      await api.register(metaRoutes, {
+        prefix: '/meta',
+        startMetaOnboardingUseCase,
+        completeMetaOnboardingUseCase,
+        checkMetaConnectionUseCase,
+        embeddedSignupAvailable,
       });
 
       await api.register(flowsRoutes, {

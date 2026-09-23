@@ -8,6 +8,9 @@ import {
   UnauthorizedError,
   ForbiddenError,
   QuotaExceededError,
+  MetaApiError,
+  MetaOwnershipError,
+  OAuthStateError,
 } from '../../domain/errors.js';
 
 export interface ApiResponse<T> {
@@ -74,6 +77,36 @@ export function sendDomainError(reply: FastifyReply, err: unknown): void {
 
   if (err instanceof QuotaExceededError) {
     void reply.status(429).send({
+      data: null,
+      error: { code: err.code, message: err.message },
+      meta: { request_id: requestId },
+    });
+    return;
+  }
+
+  // Ownership could not be proven -> the caller is not allowed to claim this
+  // WABA / phone number. 403, not 400: it is an authorisation failure.
+  if (err instanceof MetaOwnershipError) {
+    void reply.status(403).send({
+      data: null,
+      error: { code: err.code, message: err.message },
+      meta: { request_id: requestId },
+    });
+    return;
+  }
+
+  if (err instanceof OAuthStateError) {
+    void reply.status(400).send({
+      data: null,
+      error: { code: err.code, message: err.message },
+      meta: { request_id: requestId },
+    });
+    return;
+  }
+
+  // Upstream Meta failure — 502 so callers can distinguish it from our bugs.
+  if (err instanceof MetaApiError) {
+    void reply.status(502).send({
       data: null,
       error: { code: err.code, message: err.message },
       meta: { request_id: requestId },

@@ -15,6 +15,26 @@ const configSchema = z.object({
   // JWT
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
 
+  // Meta onboarding (Embedded Signup / OAuth code exchange / webhook subscription)
+  // META_APP_ID and META_CONFIG_ID are only required to offer Embedded Signup;
+  // the manual connect path keeps working without them.
+  META_APP_ID: z.string().default(''),
+  META_APP_SECRET: z.string().default(''),
+  META_CONFIG_ID: z.string().default(''),
+  META_API_BASE: z
+    .string()
+    .url('META_API_BASE must be a valid URL')
+    .default('https://graph.facebook.com/v21.0'),
+  META_EMBEDDED_SIGNUP_REDIRECT_URI: z.string().default(''),
+  OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
+  META_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+  // Reject onboarding unless the token provably manages the requested WABA.
+  // Disabling this re-opens the phone-number hijack vector (audit finding H2).
+  META_REQUIRE_OWNERSHIP_PROOF: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true' || v === '1'),
+
   // Encryption
   MASTER_KEY: z
     .string()

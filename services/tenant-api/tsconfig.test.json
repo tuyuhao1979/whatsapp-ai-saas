@@ -3,6 +3,7 @@
   "compilerOptions": {
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "types": ["jest", "node"],
     "rootDir": ".",
     "outDir": "dist-test"
   },

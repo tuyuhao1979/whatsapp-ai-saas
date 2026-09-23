@@ -78,7 +78,11 @@ function makePayload(phoneNumberId: string, messageId = 'wamid.test-001') {
   };
 }
 
-function makeStatusPayload(phoneNumberId: string) {
+function makeStatusPayload(
+  phoneNumberId: string,
+  status: 'sent' | 'delivered' | 'read' | 'failed' = 'delivered',
+  timestamp = '1716000100',
+) {
   return {
     object: 'whatsapp_business_account',
     entry: [
@@ -88,7 +92,14 @@ function makeStatusPayload(phoneNumberId: string) {
             value: {
               messaging_product: 'whatsapp' as const,
               metadata: { phone_number_id: phoneNumberId },
-              statuses: [{ id: 'wamid.status-001', status: 'delivered' }],
+              statuses: [
+                {
+                  id: 'wamid.status-001',
+                  status,
+                  timestamp,
+                  recipient_id: '5491155555555',
+                },
+              ],
             },
           },
         ],
@@ -114,16 +125,124 @@ describe('ProcessWebhookUseCase', () => {
     await useCase.execute(makePayload(PHONE_ID), RECEIVED_AT);
 
     expect(queue.published).toHaveLength(1);
-    const { tenantId, envelope } = queue.published[0];
+    const { tenantId, envelope } = queue.published[0]!;
     expect(tenantId).toBe(TENANT_ID);
     expect(envelope.tenant_id).toBe(TENANT_ID);
     expect(envelope.phone_number_id).toBe(PHONE_ID);
     expect(envelope.received_at).toBe(RECEIVED_AT);
+    expect(envelope.kind).toBe('message');
+    expect(envelope.raw.messaging_product).toBe('whatsapp');
+    expect(envelope.raw.messages?.[0]?.id).toBe('wamid.test-001');
+  });
+
+  test('uses Meta\'s own message id (wamid) as the idempotency key', async () => {
+    // Regression guard for the duplicate-reply defect: the key used to be a
+    // fresh random UUID per delivery, so a Meta retry produced a second reply.
+    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+    const queue = new FakeMessageQueue();
+    const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
+
+    await useCase.execute(makePayload(PHONE_ID, 'wamid.ABC123'), RECEIVED_AT);
+
+    const { envelope } = queue.published[0]!;
+    expect(envelope.wamid).toBe('wamid.ABC123');
+    // An internal trace id is still allocated, purely for log correlation.
     expect(envelope.message_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
-    expect(envelope.raw.messaging_product).toBe('whatsapp');
-    expect(envelope.raw.messages?.[0].id).toBe('wamid.test-001');
+    expect(envelope.message_id).not.toBe(envelope.wamid);
+  });
+
+  test('two deliveries of the same Meta message share one wamid but differ in trace id', async () => {
+    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+    const queue = new FakeMessageQueue();
+    const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
+
+    await useCase.execute(makePayload(PHONE_ID, 'wamid.DUP'), RECEIVED_AT);
+    await useCase.execute(makePayload(PHONE_ID, 'wamid.DUP'), RECEIVED_AT);
+
+    expect(queue.published).toHaveLength(2);
+    expect(queue.published[0]!.envelope.wamid).toBe('wamid.DUP');
+    expect(queue.published[1]!.envelope.wamid).toBe('wamid.DUP');
+    expect(queue.published[0]!.envelope.message_id).not.toBe(
+      queue.published[1]!.envelope.message_id,
+    );
+  });
+
+  test('emits one envelope per message when Meta batches several', async () => {
+    // Previously a whole `value` collapsed into a single envelope holding
+    // messages[0], so every additional message in the batch was lost.
+    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+    const queue = new FakeMessageQueue();
+    const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
+
+    const payload = makePayload(PHONE_ID, 'wamid.first');
+    payload.entry[0]!.changes[0]!.value.messages.push({
+      from: '5491155555555',
+      id: 'wamid.second',
+      timestamp: '1716000001',
+      type: 'text' as const,
+      text: { body: 'Second' },
+    });
+
+    await useCase.execute(payload, RECEIVED_AT);
+
+    expect(queue.published).toHaveLength(2);
+    expect(queue.published.map((p) => p.envelope.wamid)).toEqual([
+      'wamid.first',
+      'wamid.second',
+    ]);
+    expect(queue.published.every((p) => p.envelope.kind === 'message')).toBe(true);
+  });
+
+  test('delivery status updates are enqueued as kind=status (previously dropped)', async () => {
+    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+    const queue = new FakeMessageQueue();
+    const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
+
+    await useCase.execute(makeStatusPayload(PHONE_ID), RECEIVED_AT);
+
+    expect(queue.published).toHaveLength(1);
+    const { envelope } = queue.published[0]!;
+    expect(envelope.kind).toBe('status');
+    expect(envelope.raw.statuses?.[0]?.status).toBe('delivered');
+    expect(envelope.raw.messages).toBeUndefined();
+  });
+
+  test('status wamid distinguishes transitions so none are de-duplicated away', async () => {
+    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+    const queue = new FakeMessageQueue();
+    const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
+
+    await useCase.execute(makeStatusPayload(PHONE_ID, 'sent', '1716000100'), RECEIVED_AT);
+    await useCase.execute(makeStatusPayload(PHONE_ID, 'delivered', '1716000200'), RECEIVED_AT);
+    await useCase.execute(makeStatusPayload(PHONE_ID, 'read', '1716000300'), RECEIVED_AT);
+    // A retry of the *same* transition must keep the same key.
+    await useCase.execute(makeStatusPayload(PHONE_ID, 'read', '1716000300'), RECEIVED_AT);
+
+    const wamids = queue.published.map((p) => p.envelope.wamid);
+    expect(wamids).toEqual([
+      'wamid.status-001:sent:1716000100',
+      'wamid.status-001:delivered:1716000200',
+      'wamid.status-001:read:1716000300',
+      'wamid.status-001:read:1716000300',
+    ]);
+    expect(new Set(wamids).size).toBe(3);
+  });
+
+  test('a payload carrying both messages and statuses produces both kinds', async () => {
+    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+    const queue = new FakeMessageQueue();
+    const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
+
+    const payload = makePayload(PHONE_ID, 'wamid.both');
+    Object.assign(payload.entry[0]!.changes[0]!.value, {
+      statuses: [{ id: 'wamid.both', status: 'delivered', timestamp: '1716000002' }],
+    });
+
+    await useCase.execute(payload, RECEIVED_AT);
+
+    expect(queue.published.map((p) => p.envelope.kind)).toEqual(['message', 'status']);
   });
 
   test('TenantNotFoundError: skips enqueue and logs warning (no throw)', async () => {
@@ -135,13 +254,12 @@ describe('ProcessWebhookUseCase', () => {
     expect(queue.published).toHaveLength(0);
   });
 
-  test('non-message events (status updates) are silently ignored', async () => {
-    const cache = new FakeTenantCache({ [PHONE_ID]: TENANT_ID });
+  test('an unknown phone number also drops status events', async () => {
+    const cache = new FakeTenantCache({});
     const queue = new FakeMessageQueue();
     const useCase = new ProcessWebhookUseCase({ tenantCache: cache, messageQueue: queue, logger: noopLogger });
 
     await useCase.execute(makeStatusPayload(PHONE_ID), RECEIVED_AT);
-
     expect(queue.published).toHaveLength(0);
   });
 

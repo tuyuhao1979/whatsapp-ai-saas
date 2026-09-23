@@ -1,17 +1,19 @@
 /** @type {import('jest').Config} */
 export default {
-  preset: 'ts-jest/presets/default-esm',
+  preset: 'ts-jest',
   testEnvironment: 'node',
-  extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
     // Strip .js extensions from imports so ts-jest can resolve .ts files
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {
+    // CommonJS output (see tsconfig.test.json). The previous ESM preset was
+    // combined with a CommonJS tsconfig override, so ts-jest emitted `exports`
+    // while jest parsed the module as ESM and every suite failed with
+    // "exports is not defined" before it could import its subject.
     '^.+\\.tsx?$': [
       'ts-jest',
       {
-        useESM: true,
         tsconfig: 'tsconfig.test.json',
       },
     ],
@@ -21,7 +23,7 @@ export default {
     'src/**/*.ts',
     '!src/main.ts',
   ],
-  coverageThresholds: {
+  coverageThreshold: {
     global: {
       branches: 70,
       functions: 80,

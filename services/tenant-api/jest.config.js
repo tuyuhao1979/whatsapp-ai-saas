@@ -2,15 +2,17 @@
 const config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {
+    // CommonJS output (see tsconfig.test.json). The previous ESM preset was
+    // combined with a CommonJS tsconfig override, so ts-jest emitted `exports`
+    // while jest parsed the module as ESM and every suite failed with
+    // "exports is not defined" before it could even import the subject.
     '^.+\\.ts$': [
       'ts-jest',
       {
-        useESM: true,
         tsconfig: 'tsconfig.test.json',
       },
     ],

@@ -41,6 +41,11 @@ export class PrismaTenantRepo implements ITenantRepo {
     return row ? mapTenant(row) : null;
   }
 
+  async findByPhoneNumberId(phoneNumberId: string): Promise<Tenant | null> {
+    const row = await this.prisma.tenant.findUnique({ where: { phoneNumberId } });
+    return row ? mapTenant(row) : null;
+  }
+
   async create(input: CreateTenantInput): Promise<Tenant> {
     const row = await this.prisma.tenant.create({
       data: {

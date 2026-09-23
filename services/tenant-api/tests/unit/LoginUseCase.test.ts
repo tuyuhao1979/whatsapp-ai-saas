@@ -7,7 +7,7 @@ import type { Tenant } from '../../src/domain/models/Tenant.js';
 import type { User } from '../../src/domain/models/User.js';
 
 const TENANT: Tenant = {
-  id: 'tenant-uuid',
+  id: '11111111-1111-4111-8111-111111111111',
   name: 'Acme',
   slug: 'acme',
   wabaId: null,
@@ -22,7 +22,7 @@ const TENANT: Tenant = {
 async function makeUser(password: string): Promise<User> {
   return {
     id: 'user-uuid',
-    tenantId: 'tenant-uuid',
+    tenantId: '11111111-1111-4111-8111-111111111111',
     email: 'owner@acme.com',
     passwordHash: await argon2.hash(password, { type: argon2.argon2id }),
     role: 'owner',
@@ -37,6 +37,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(TENANT),
+      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -55,7 +56,7 @@ describe('LoginUseCase', () => {
     });
 
     expect(result).toMatchObject({
-      tenantId: 'tenant-uuid',
+      tenantId: '11111111-1111-4111-8111-111111111111',
       userId: 'user-uuid',
       role: 'owner',
     });
@@ -65,6 +66,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(null),
+      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -84,6 +86,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(TENANT),
+      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -106,6 +109,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(TENANT),
+      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
