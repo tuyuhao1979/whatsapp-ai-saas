@@ -70,7 +70,6 @@ def _configure_logging(level: str = "INFO") -> None:
 
 _REQUIRED_VARS = [
     "REDIS_URL",
-    "DATABASE_URL",
     "S3_ENDPOINT",
     "S3_ACCESS_KEY",
     "S3_SECRET_KEY",
@@ -78,6 +77,18 @@ _REQUIRED_VARS = [
     "CHROMADB_HOST",
     "CHROMADB_PORT",
 ]
+
+# Accept either name; docker-compose injects POSTGRES_URL for this service
+# while this module previously only read DATABASE_URL (startup exit(1)).
+_DATABASE_URL_VARS = ("DATABASE_URL", "POSTGRES_URL")
+
+
+def _resolve_database_url() -> str | None:
+    for var in _DATABASE_URL_VARS:
+        value = os.environ.get(var)
+        if value:
+            return value
+    return None
 
 
 def _load_config() -> dict[str, str]:
@@ -89,6 +100,13 @@ def _load_config() -> dict[str, str]:
             missing.append(var)
         else:
             config[var] = value
+
+    database_url = _resolve_database_url()
+    if database_url is None:
+        missing.append("DATABASE_URL (or POSTGRES_URL)")
+    else:
+        config["DATABASE_URL"] = database_url
+
     if missing:
         print(  # noqa: T201 — logging not yet configured
             f"FATAL: missing required environment variables: {', '.join(missing)}",

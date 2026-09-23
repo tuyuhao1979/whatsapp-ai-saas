@@ -22,8 +22,18 @@ from typing import Any
 import redis
 
 from flow_engine.application.flow_executor import FlowExecutor
-from flow_engine.domain.models import ConversationTurn, InboundMessage, Session
-from flow_engine.domain.ports import IConvLogRepo, ISessionRepo, ITenantCredentialsRepo
+from flow_engine.domain.models import (
+    ConversationTurn,
+    InboundMessage,
+    MessageStatusEvent,
+    Session,
+)
+from flow_engine.domain.ports import (
+    IConvLogRepo,
+    IMessageStatusRepo,
+    ISessionRepo,
+    ITenantCredentialsRepo,
+)
 from flow_engine.infrastructure.redis.redis_lock import (
     RedisLock,
     SessionLockError,
@@ -41,6 +51,7 @@ _XCLAIM_CHECK_INTERVAL_S = 60
 _READ_COUNT = 5
 _RATE_LIMIT = 30     # messages per minute per tenant
 _RATE_LIMIT_MSG = "I'm temporarily busy. Please try again in a minute."
+_LOCK_MAX_RETRIES = 3   # re-enqueue budget when the conversation lock is busy
 
 
 class FlowEngineConsumer:
@@ -56,6 +67,7 @@ class FlowEngineConsumer:
         conv_log_repo: IConvLogRepo,
         tenant_credentials_repo: ITenantCredentialsRepo,
         meta_send: Any,  # IMetaSendPort — needed for rate-limit replies
+        message_status_repo: IMessageStatusRepo | None = None,
     ) -> None:
         self._redis = redis_client
         self._executor = executor
@@ -63,6 +75,7 @@ class FlowEngineConsumer:
         self._conv_log_repo = conv_log_repo
         self._tenant_credentials_repo = tenant_credentials_repo
         self._meta_send = meta_send
+        self._message_status_repo = message_status_repo
         self._last_xclaim_check: float = 0.0
 
     def run(self) -> None:
@@ -128,6 +141,69 @@ class FlowEngineConsumer:
         message_id: str,
         fields: dict[str, str],
     ) -> None:
+        """Dispatch on the envelope kind published by the gateway.
+
+        `kind` is written as its own stream field so dispatch does not require
+        parsing the JSON envelope first.
+        """
+        if fields.get("kind") == "status":
+            self._process_status(stream_key, message_id, fields)
+            return
+        self._process_message(stream_key, message_id, fields)
+
+    # ------------------------------------------------------------------
+    # Delivery/read/failure callbacks
+    # ------------------------------------------------------------------
+
+    def _process_status(
+        self,
+        stream_key: str,
+        message_id: str,
+        fields: dict[str, str],
+    ) -> None:
+        """Persist a Meta message-status callback. Never raises."""
+        try:
+            event = _parse_status(fields)
+        except (KeyError, ValueError):
+            logger.exception(
+                "Malformed status envelope — ACKing", extra={"message_id": message_id}
+            )
+            self._ack(stream_key, message_id)
+            return
+
+        if self._message_status_repo is None:
+            logger.warning(
+                "No message status repo configured — dropping status event",
+                extra={"tenant_id": event.tenant_id, "wamid": event.wamid},
+            )
+            self._ack(stream_key, message_id)
+            return
+
+        # Idempotency: Meta retries deliveries. The DB uniqueness constraint is
+        # the authoritative guard; this is a cheap short-circuit.
+        dedupe_key = event.idempotency_key
+        if is_processed(self._redis, dedupe_key):
+            logger.info(
+                "Duplicate status event — skipping",
+                extra={"tenant_id": event.tenant_id, "wamid": event.wamid},
+            )
+            self._ack(stream_key, message_id)
+            return
+
+        self._message_status_repo.record(event)
+        mark_processed(self._redis, dedupe_key)
+        self._ack(stream_key, message_id)
+
+    # ------------------------------------------------------------------
+    # Inbound messages
+    # ------------------------------------------------------------------
+
+    def _process_message(
+        self,
+        stream_key: str,
+        message_id: str,
+        fields: dict[str, str],
+    ) -> None:
         # 1. Parse envelope
         try:
             msg = _parse_message(fields)
@@ -135,6 +211,19 @@ class FlowEngineConsumer:
             logger.exception(
                 "Malformed stream message — ACKing",
                 extra={"message_id": message_id},
+            )
+            self._ack(stream_key, message_id)
+            return
+
+        # Idempotency key is Meta's own message id (wamid), NOT the internal
+        # trace UUID: Meta re-delivers the same webhook on timeout, and a
+        # per-delivery random key would let duplicates through.
+        dedupe_key = msg.wamid or msg.message_id
+
+        if is_processed(self._redis, dedupe_key):
+            logger.info(
+                "Duplicate message — skipping",
+                extra={"tenant_id": msg.tenant_id, "wamid": dedupe_key},
             )
             self._ack(stream_key, message_id)
             return
@@ -159,16 +248,11 @@ class FlowEngineConsumer:
         log_extra = {
             "tenant_id": msg.tenant_id,
             "wa_id": msg.wa_id,
+            "wamid": dedupe_key,
             "message_id": message_id,
         }
 
-        # 2. Idempotency guard
-        if is_processed(self._redis, message_id):
-            logger.info("Duplicate message — skipping", extra=log_extra)
-            self._ack(stream_key, message_id)
-            return
-
-        # 3. Rate limit
+        # 2. Rate limit
         if not self._check_rate_limit(msg.tenant_id):
             logger.warning("Rate limit exceeded", extra={"tenant_id": msg.tenant_id})
             try:
@@ -183,29 +267,33 @@ class FlowEngineConsumer:
             self._ack(stream_key, message_id)
             return
 
-        # 4. Conversation lock
+        # 3. Conversation lock
         lock = RedisLock(self._redis, msg.tenant_id, msg.wa_id)
         if not lock.acquire():
-            # Re-enqueue with 1s delay via XADD; ACK the current entry
             logger.info("Lock busy — re-enqueuing", extra=log_extra)
             self._reenqueue(stream_key, fields)
             self._ack(stream_key, message_id)
             return
 
+        sent_wamids: list[str] = []
+        processed_ok = False
+        started = time.monotonic()
         try:
-            # 5. Load session
+            # 4. Load session
             session = self._session_repo.load(msg.tenant_id, msg.wa_id)
             if session is None:
                 now = datetime.now(timezone.utc).isoformat()
                 session = Session.new(msg.tenant_id, msg.wa_id, now)
 
-            # 6. Execute
-            self._executor.execute(msg, session)
+            # 5. Execute
+            sent_wamids = self._executor.execute(msg, session) or []
 
-            # 7. Save session
+            # 6. Save session
             self._session_repo.save(session)
+            processed_ok = True
 
-            # 8. Write conversation log (inbound + outbound turns)
+            # 7. Write conversation log (inbound turn)
+            latency_ms = int((time.monotonic() - started) * 1000)
             now_str = datetime.now(timezone.utc).isoformat()
             self._conv_log_repo.write(
                 ConversationTurn(
@@ -213,9 +301,11 @@ class FlowEngineConsumer:
                     wa_id=msg.wa_id,
                     flow_id=session.flow_id,
                     direction="inbound",
-                    message_text="",  # PII — not stored
-                    node_id=session.current_node,
+                    message_type=msg.message_type,
+                    content=self._build_conv_content(msg, sent_wamids),
+                    node_key=session.current_node,
                     llm_tokens=0,
+                    latency_ms=latency_ms,
                     created_at=now_str,
                 )
             )
@@ -223,15 +313,28 @@ class FlowEngineConsumer:
         except Exception:
             logger.exception("Processing error", extra=log_extra)
         finally:
-            # 10. Release lock
             lock.release()
 
-        # 11. Mark processed
-        mark_processed(self._redis, message_id)
+        # Marking processed only on success preserves the ability to retry a
+        # failed message instead of silently dropping it.
+        if processed_ok:
+            mark_processed(self._redis, dedupe_key)
+        else:
+            logger.warning(
+                "Message processing failed — not marked processed", extra=log_extra
+            )
 
-        # 12. ACK
         self._ack(stream_key, message_id)
         logger.info("Message processed", extra=log_extra)
+
+    def _build_conv_content(
+        self, msg: InboundMessage, sent_wamids: list[str]
+    ) -> dict[str, Any]:
+        build = getattr(self._conv_log_repo, "build_content", None)
+        content: dict[str, Any] = build(msg.text) if callable(build) else {}
+        if sent_wamids:
+            content["sent_wamids"] = sent_wamids
+        return content
 
     def _check_rate_limit(self, tenant_id: str) -> bool:
         minute_bucket = math.floor(time.time() / 60)
@@ -246,8 +349,24 @@ class FlowEngineConsumer:
             return True
 
     def _reenqueue(self, stream_key: str, fields: dict[str, str]) -> None:
+        """Re-queue a message whose conversation lock was busy.
+
+        The consumer loop is single-threaded, so sleeping here would stall
+        every other tenant. Instead we carry a retry counter and give up after
+        a bounded number of attempts.
+        """
+        retries = int(fields.get("_lock_retries", "0")) + 1
+        if retries > _LOCK_MAX_RETRIES:
+            logger.warning(
+                "Lock retry budget exhausted — dropping message",
+                extra={"stream": stream_key, "retries": retries},
+            )
+            return
+
+        new_fields = dict(fields)
+        new_fields["_lock_retries"] = str(retries)
         try:
-            self._redis.xadd(stream_key, fields, maxlen=10_000, approximate=True)
+            self._redis.xadd(stream_key, new_fields, maxlen=10_000, approximate=True)
         except redis.RedisError:
             logger.exception("Failed to re-enqueue message", extra={"stream": stream_key})
 
@@ -261,8 +380,13 @@ class FlowEngineConsumer:
             )
 
     def _discover_streams(self) -> list[str]:
+        """Return all keys matching the stream pattern.
+
+        Uses SCAN rather than KEYS: KEYS is O(N) and blocks the Redis server,
+        and it was also not granted in the service ACL.
+        """
         try:
-            keys = self._redis.keys(self.STREAM_PATTERN)
+            keys = list(self._redis.scan_iter(match=self.STREAM_PATTERN, count=100))
             return [k.decode() if isinstance(k, bytes) else k for k in keys]
         except redis.RedisError:
             logger.exception("Failed to discover streams")
@@ -316,9 +440,9 @@ def _decode_fields(fields: dict[Any, Any]) -> dict[str, str]:
 
 
 def _parse_message(fields: dict[str, str]) -> InboundMessage:
-    """Parse the stream envelope into an InboundMessage.
+    """Parse a `kind=message` stream envelope into an InboundMessage.
 
-    Supports the current JSON envelope in `data` and the legacy flat-field shape.
+    Supports the JSON envelope in `data` and the legacy flat-field shape.
     """
     if "data" in fields:
         payload = json.loads(fields["data"])
@@ -342,6 +466,8 @@ def _parse_message(fields: dict[str, str]) -> InboundMessage:
             text=text,
             timestamp=timestamp,
             access_token="",
+            wamid=first_message.get("id", ""),
+            message_type=first_message.get("type", "text"),
         )
 
     return InboundMessage(
@@ -352,4 +478,55 @@ def _parse_message(fields: dict[str, str]) -> InboundMessage:
         text=fields.get("text", ""),
         timestamp=fields.get("timestamp", ""),
         access_token=fields.get("access_token", ""),
+        wamid=fields.get("wamid", ""),
+        message_type=fields.get("message_type", "text"),
     )
+
+
+def _parse_status(fields: dict[str, str]) -> MessageStatusEvent:
+    """Parse a `kind=status` stream envelope into a MessageStatusEvent.
+
+    Raises KeyError/ValueError on a malformed envelope so the caller can ACK
+    and move on rather than retrying a poison message forever.
+    """
+    payload = json.loads(fields["data"])
+    raw = payload["raw"]
+    statuses = raw.get("statuses") or []
+    if not statuses:
+        raise ValueError("status envelope carries no statuses")
+
+    status_entry = statuses[0]
+    wamid = status_entry.get("id")
+    if not wamid:
+        raise ValueError("status entry is missing the message id")
+
+    errors = status_entry.get("errors") or []
+    first_error = errors[0] if errors else {}
+    conversation = status_entry.get("conversation") or {}
+    pricing = status_entry.get("pricing") or {}
+
+    error_code = first_error.get("code")
+    return MessageStatusEvent(
+        tenant_id=payload["tenant_id"],
+        wamid=str(wamid),
+        status=str(status_entry.get("status", "unknown")),
+        recipient_id=status_entry.get("recipient_id"),
+        occurred_at=_unix_to_iso(status_entry.get("timestamp"))
+        or payload.get("received_at"),
+        error_code=str(error_code) if error_code is not None else None,
+        error_title=first_error.get("title"),
+        conversation_id=conversation.get("id"),
+        pricing_category=pricing.get("category"),
+        raw=status_entry,
+    )
+
+
+def _unix_to_iso(value: Any) -> str | None:
+    """Convert a Meta unix-seconds timestamp (string or int) to ISO 8601."""
+    if value is None or value == "":
+        return None
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()

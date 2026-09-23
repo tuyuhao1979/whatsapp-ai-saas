@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { IMessageQueue } from '../domain/ports/IMessageQueue.js';
 import type { ITenantCache } from '../domain/ports/ITenantCache.js';
-import type { MetaWebhookValue } from '../domain/models/WebhookEnvelope.js';
+import type { MetaWebhookValue, WebhookEnvelope } from '../domain/models/WebhookEnvelope.js';
 import { TenantNotFoundError } from '../domain/errors.js';
 
 export interface MetaWebhookPayload {
@@ -51,16 +51,20 @@ export class ProcessWebhookUseCase {
         const value = change.value;
         if (!value) continue;
 
-        // Ignore non-message events (status updates, read receipts)
-        const hasMessages = Array.isArray(value.messages) && value.messages.length > 0;
-        if (!hasMessages) {
-          this.logger.debug({ event: 'webhook.non_message_ignored' }, 'Ignoring non-message webhook event');
-          continue;
-        }
-
         const phoneNumberId = value.metadata?.phone_number_id;
         if (!phoneNumberId) {
           this.logger.warn({ event: 'webhook.missing_phone_number_id' }, 'No phone_number_id in metadata, skipping');
+          continue;
+        }
+
+        const messages = Array.isArray(value.messages) ? value.messages : [];
+        const statuses = Array.isArray(value.statuses) ? value.statuses : [];
+
+        if (messages.length === 0 && statuses.length === 0) {
+          this.logger.debug(
+            { event: 'webhook.unhandled_event' },
+            'Ignoring webhook event with no messages or statuses',
+          );
           continue;
         }
 
@@ -78,26 +82,59 @@ export class ProcessWebhookUseCase {
           throw err;
         }
 
-        const envelope = {
-          message_id: randomUUID(),
-          received_at: receivedAt,
-          tenant_id: tenantId,
-          phone_number_id: phoneNumberId,
-          raw: value,
-        };
+        // One envelope per item: a batched Meta payload used to collapse to a
+        // single envelope holding messages[0], silently dropping the rest.
+        for (const message of messages) {
+          await this.publish(tenantId, phoneNumberId, receivedAt, {
+            wamid: message.id,
+            kind: 'message',
+            raw: { ...value, messages: [message], statuses: undefined },
+          });
+        }
 
-        await this.messageQueue.publish(tenantId, envelope);
-
-        this.logger.info(
-          {
-            event: 'webhook.enqueued',
-            tenant_id: tenantId,
-            phone_number_id: phoneNumberId,
-            message_id: envelope.message_id,
-          },
-          'Webhook envelope enqueued',
-        );
+        for (const status of statuses) {
+          await this.publish(tenantId, phoneNumberId, receivedAt, {
+            // Include the status and timestamp so a message's
+            // sent → delivered → read progression is not de-duplicated away,
+            // while a re-delivery of the same transition still is.
+            wamid: `${status.id}:${status.status}:${status.timestamp}`,
+            kind: 'status',
+            raw: { ...value, messages: undefined, statuses: [status] },
+          });
+        }
       }
     }
+  }
+
+  /** Build and enqueue a single envelope. */
+  private async publish(
+    tenantId: string,
+    phoneNumberId: string,
+    receivedAt: string,
+    item: Pick<WebhookEnvelope, 'wamid' | 'kind' | 'raw'>,
+  ): Promise<void> {
+    const envelope: WebhookEnvelope = {
+      message_id: randomUUID(),
+      wamid: item.wamid,
+      kind: item.kind,
+      received_at: receivedAt,
+      tenant_id: tenantId,
+      phone_number_id: phoneNumberId,
+      raw: item.raw,
+    };
+
+    await this.messageQueue.publish(tenantId, envelope);
+
+    this.logger.info(
+      {
+        event: 'webhook.enqueued',
+        kind: envelope.kind,
+        tenant_id: tenantId,
+        phone_number_id: phoneNumberId,
+        wamid: envelope.wamid,
+        message_id: envelope.message_id,
+      },
+      'Webhook envelope enqueued',
+    );
   }
 }

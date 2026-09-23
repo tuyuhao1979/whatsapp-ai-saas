@@ -38,6 +38,7 @@ class NodeResult:
     done: bool = False
     requires_user_input: bool = False  # True for message/interactive/collect_input
     llm_tokens: int = 0
+    sent_wamid: str | None = None      # Meta message id of the last outbound send
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ def execute_message(
     except (KeyError, ValueError):
         pass  # send as-is if slot not yet filled
 
-    deps.meta_send.send_text(
+    sent_wamid = deps.meta_send.send_text(
         phone_number_id=deps.phone_number_id,
         to=session.wa_id,
         text=content,
@@ -126,10 +127,11 @@ def execute_message(
             reply=content,
             next_node=None,
             requires_user_input=True,
+            sent_wamid=sent_wamid,
         )
 
     next_node = _first_transition(node, session)
-    return NodeResult(reply=content, next_node=next_node)
+    return NodeResult(reply=content, next_node=next_node, sent_wamid=sent_wamid)
 
 
 def execute_interactive(
@@ -155,13 +157,18 @@ def execute_interactive(
             "action": {"buttons": buttons},
         },
     }
-    deps.meta_send.send_interactive(
+    sent_wamid = deps.meta_send.send_interactive(
         phone_number_id=deps.phone_number_id,
         to=session.wa_id,
         payload=payload,
         access_token=deps.access_token,
     )
-    return NodeResult(reply=body_text, next_node=None, requires_user_input=True)
+    return NodeResult(
+        reply=body_text,
+        next_node=None,
+        requires_user_input=True,
+        sent_wamid=sent_wamid,
+    )
 
 
 def execute_collect_input(
@@ -178,13 +185,18 @@ def execute_collect_input(
 
     if not message_text:
         # First entry: send the prompt and wait
-        deps.meta_send.send_text(
+        prompt_wamid = deps.meta_send.send_text(
             phone_number_id=deps.phone_number_id,
             to=session.wa_id,
             text=prompt,
             access_token=deps.access_token,
         )
-        return NodeResult(reply=prompt, next_node=None, requires_user_input=True)
+        return NodeResult(
+            reply=prompt,
+            next_node=None,
+            requires_user_input=True,
+            sent_wamid=prompt_wamid,
+        )
 
     # User replied: validate and store
     if validation_pattern:
@@ -196,13 +208,18 @@ def execute_collect_input(
                     done=False,
                 )
             error_msg: str = config.get("validation_error", "Invalid input. Please try again.")
-            deps.meta_send.send_text(
+            error_wamid = deps.meta_send.send_text(
                 phone_number_id=deps.phone_number_id,
                 to=session.wa_id,
                 text=error_msg,
                 access_token=deps.access_token,
             )
-            return NodeResult(reply=error_msg, next_node=None, requires_user_input=True)
+            return NodeResult(
+                reply=error_msg,
+                next_node=None,
+                requires_user_input=True,
+                sent_wamid=error_wamid,
+            )
 
     slot_updates = {slot: message_text} if slot else {}
     next_node = _first_transition(node, session)
@@ -299,7 +316,7 @@ def execute_llm_generate(
         max_tokens=max_tokens,
     )
 
-    deps.meta_send.send_text(
+    sent_wamid = deps.meta_send.send_text(
         phone_number_id=deps.phone_number_id,
         to=session.wa_id,
         text=reply_text,
@@ -307,7 +324,12 @@ def execute_llm_generate(
     )
 
     next_node = _first_transition(node, session)
-    return NodeResult(reply=reply_text, next_node=next_node, llm_tokens=tokens)
+    return NodeResult(
+        reply=reply_text,
+        next_node=next_node,
+        llm_tokens=tokens,
+        sent_wamid=sent_wamid,
+    )
 
 
 def execute_api_call(
@@ -368,19 +390,20 @@ def execute_end(
     """Send optional closing message; reset session state (keep history)."""
     config = node.config
     content: str | None = config.get("content")
+    sent_wamid: str | None = None
     if content:
         try:
             content = content.format_map(session.slots)
         except (KeyError, ValueError):
             pass
-        deps.meta_send.send_text(
+        sent_wamid = deps.meta_send.send_text(
             phone_number_id=deps.phone_number_id,
             to=session.wa_id,
             text=content,
             access_token=deps.access_token,
         )
 
-    return NodeResult(reply=content, done=True)
+    return NodeResult(reply=content, done=True, sent_wamid=sent_wamid)
 
 
 # ---------------------------------------------------------------------------

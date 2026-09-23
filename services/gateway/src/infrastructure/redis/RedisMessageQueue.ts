@@ -39,6 +39,10 @@ export class RedisMessageQueue implements IMessageQueue {
         '~',
         this.maxlenApprox,
         '*',   // auto-generated stream ID
+        // `kind` is written as its own field so the consumer can dispatch
+        // message vs status envelopes without parsing the JSON body first.
+        'kind',
+        envelope.kind,
         'data',
         data,
       );

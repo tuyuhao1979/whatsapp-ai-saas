@@ -205,6 +205,13 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
       MASTER_KEY: ${MASTER_KEY}
+      # Meta onboarding (Embedded Signup / code exchange / webhook subscription)
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET}
+      META_CONFIG_ID: ${META_CONFIG_ID:-}
+      META_API_BASE: ${META_API_BASE:-https://graph.facebook.com/v21.0}
+      META_EMBEDDED_SIGNUP_REDIRECT_URI: ${META_EMBEDDED_SIGNUP_REDIRECT_URI:-}
+      OAUTH_STATE_TTL_SECONDS: ${OAUTH_STATE_TTL_SECONDS:-600}
       S3_ENDPOINT: http://minio:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET_KB: ${S3_BUCKET_KB:-kb-documents}
@@ -239,6 +246,8 @@ services:
       ADMIN_PORT: 8001
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       REDIS_URL: redis://flow_engine_user:${REDIS_FLOW_ENGINE_PASSWORD}@redis:6379/0
+      # Both names are injected so either service-side reader works.
+      DATABASE_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
       POSTGRES_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000
@@ -249,6 +258,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      STORE_MESSAGE_BODY: ${STORE_MESSAGE_BODY:-false}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-500}
       LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
       RAG_DEFAULT_CONFIDENCE: ${RAG_DEFAULT_CONFIDENCE:-0.55}
@@ -354,6 +364,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       REDIS_URL: redis://rag_indexer_user:${REDIS_RAG_INDEXER_PASSWORD}@redis:6379/0
+      # Both names are injected so either service-side reader works.
+      DATABASE_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
       POSTGRES_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000

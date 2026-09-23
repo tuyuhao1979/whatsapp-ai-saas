@@ -37,9 +37,17 @@ class FlowExecutor:
         self._vector_store = vector_store
         self._llm = llm
         self._conv_log_repo = conv_log_repo
+        # Meta message ids of everything sent during the current execution,
+        # so the consumer can persist them and correlate status callbacks.
+        self._sent_wamids: list[str] = []
 
-    def execute(self, message: InboundMessage, session: Session) -> None:
-        """Process one inbound message, mutating *session* in place."""
+    def execute(self, message: InboundMessage, session: Session) -> list[str]:
+        """Process one inbound message, mutating *session* in place.
+
+        Returns the Meta message ids (wamids) of every outbound message sent
+        while handling this inbound message.
+        """
+        self._sent_wamids = []
         now = _now_iso()
 
         # Append user turn to history (cap at 10)
@@ -81,6 +89,7 @@ class FlowExecutor:
             session.state = "ERROR"
 
         session.last_msg_at = _now_iso()
+        return self._sent_wamids
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -110,7 +119,7 @@ class FlowExecutor:
             return
 
         result = execute_node(node, session, message.text, deps)
-        _apply_result(session, result)
+        self._record_sent(_apply_result(session, result))
         self._log_assistant_turn(session, result, message)
 
         if not result.requires_user_input and not result.done:
@@ -151,7 +160,7 @@ class FlowExecutor:
                 return
 
             result = execute_node(node, session, trigger_text, deps)
-            _apply_result(session, result)
+            self._record_sent(_apply_result(session, result))
             self._log_assistant_turn(session, result, message)
 
             # Clear trigger text after first node — subsequent nodes are automatic
@@ -194,18 +203,24 @@ class FlowExecutor:
             session.state = "IDLE"
             return
 
-        deps.meta_send.send_text(
+        sent_wamid = deps.meta_send.send_text(
             phone_number_id=message.phone_number_id,
             to=message.wa_id,
             text=reply_text,
             access_token=message.access_token,
         )
+        self._record_sent(sent_wamid)
 
         session.history.append({"role": "assistant", "content": reply_text, "ts": _now_iso()})
         if len(session.history) > 10:
             session.history = session.history[-10:]
 
         session.state = "IDLE"
+
+    def _record_sent(self, wamid: str | None) -> None:
+        """Record the Meta message id of an outbound message."""
+        if wamid:
+            self._sent_wamids.append(wamid)
 
     def _log_assistant_turn(
         self,
@@ -242,11 +257,16 @@ def _reset_flow_state(session: Session) -> None:
     session.retry_count = 0
 
 
-def _apply_result(session: Session, result: NodeResult) -> None:
-    """Apply NodeResult mutations to the session."""
+def _apply_result(session: Session, result: NodeResult) -> str | None:
+    """Apply NodeResult mutations to the session.
+
+    Returns the Meta message id of any message sent by the node, so the caller
+    can record it for delivery-status correlation.
+    """
     session.slots.update(result.slot_updates)
     if result.next_node:
         session.current_node = result.next_node
+    return result.sent_wamid
 
 
 def _now_iso() -> str:

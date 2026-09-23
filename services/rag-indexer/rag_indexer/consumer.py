@@ -129,7 +129,7 @@ class IndexingConsumer:
         message_id: str,
         fields: dict[str, str],
     ) -> None:
-        """Attempt to process one message; ACK on success, log on failure."""
+        """Attempt to process one message; ACK on success, retry otherwise."""
         retry_count = int(fields.get("_retry_count", "0"))
         # Handle deletion jobs (job_type == 'delete') before parsing as IndexingJob
         if fields.get("job_type") == "delete":
@@ -229,9 +229,9 @@ class IndexingConsumer:
                 )
 
     def _discover_streams(self) -> list[str]:
-        """Return all keys matching ``indexing:*``."""
+        """Return all keys matching ``indexing:*`` via SCAN (not KEYS)."""
         try:
-            keys = self._redis.keys(self.STREAM_PATTERN)
+            keys = list(self._redis.scan_iter(match=self.STREAM_PATTERN, count=100))
             return [k.decode() if isinstance(k, bytes) else k for k in keys]
         except redis.RedisError:
             logger.exception("Failed to discover streams")

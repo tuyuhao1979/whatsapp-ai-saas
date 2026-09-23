@@ -4,7 +4,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from flow_engine.domain.models import ConversationTurn, Flow, Session
+from flow_engine.domain.models import (
+    ConversationTurn,
+    Flow,
+    MessageStatusEvent,
+    Session,
+)
 
 
 class ISessionRepo(ABC):
@@ -39,7 +44,8 @@ class IMetaSendPort(ABC):
         to: str,
         text: str,
         access_token: str,
-    ) -> None: ...
+    ) -> str | None:
+        """Send a text message; return the Meta message id (wamid) if provided."""
 
     @abstractmethod
     def send_interactive(
@@ -48,7 +54,8 @@ class IMetaSendPort(ABC):
         to: str,
         payload: dict[str, Any],
         access_token: str,
-    ) -> None: ...
+    ) -> str | None:
+        """Send an interactive message; return the Meta message id if provided."""
 
 
 class IVectorStore(ABC):
@@ -64,6 +71,13 @@ class IVectorStore(ABC):
 class IConvLogRepo(ABC):
     @abstractmethod
     def write(self, turn: ConversationTurn) -> None: ...
+
+
+class IMessageStatusRepo(ABC):
+    """Persists Meta delivery/read/failure callbacks for outbound messages."""
+
+    @abstractmethod
+    def record(self, event: MessageStatusEvent) -> None: ...
 
 
 class ILLMPort(ABC):
