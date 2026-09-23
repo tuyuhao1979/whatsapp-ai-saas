@@ -3,7 +3,8 @@ import type { StartMetaOnboardingUseCase } from '../../../application/tenant/Sta
 import type { CompleteMetaOnboardingUseCase } from '../../../application/tenant/CompleteMetaOnboardingUseCase.js';
 import type { CheckMetaConnectionUseCase } from '../../../application/tenant/CheckMetaConnectionUseCase.js';
 import { ValidationError } from '../../../domain/errors.js';
-import { ok, sendDomainError } from '../reply.js';
+import { invalidRequest, ok, sendDomainError } from '../reply.js';
+import { embeddedSignupCompleteBodySchema, formatIssues } from '../validation.js';
 
 interface MetaRoutesDeps {
   startMetaOnboardingUseCase: StartMetaOnboardingUseCase;
@@ -64,17 +65,19 @@ export const metaRoutes: FastifyPluginAsync<MetaRoutesDeps> = async (fastify, op
       phone_number_id?: string;
     };
   }>('/embedded-signup/complete', { preHandler: ownerOrAdmin }, async (request, reply) => {
-    try {
-      const { code, state, waba_id, phone_number_id } = request.body ?? {};
-      if (!code) throw new ValidationError("Field 'code' is required");
-      if (!state) throw new ValidationError("Field 'state' is required");
+    const parsed = embeddedSignupCompleteBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      invalidRequest(reply, formatIssues(parsed.error));
+      return;
+    }
 
+    try {
       const result = await opts.completeMetaOnboardingUseCase.execute({
         tenantId: request.tenantId,
-        code,
-        state,
-        wabaId: waba_id,
-        phoneNumberId: phone_number_id,
+        code: parsed.data.code,
+        state: parsed.data.state,
+        wabaId: parsed.data.waba_id,
+        phoneNumberId: parsed.data.phone_number_id,
       });
 
       ok(reply, result);

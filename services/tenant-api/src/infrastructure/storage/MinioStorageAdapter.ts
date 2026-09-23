@@ -11,15 +11,75 @@ export interface MinioConfig {
   bucket: string;
 }
 
+export interface NormalisedEndpoint {
+  host: string;
+  port: number;
+  useSSL: boolean;
+}
+
+/**
+ * The minio SDK takes a bare hostname in `endPoint` plus a separate `port`;
+ * handing it a URL makes the constructor throw InvalidEndpointError and the
+ * whole service fails to boot.
+ *
+ * S3_ENDPOINT is documented (and shipped in infra/.env.example and
+ * docker-compose) as http://minio:9000, so the accepted forms are:
+ *   http://minio:9000   (URL with scheme and port)
+ *   https://s3.example  (URL with scheme, default port)
+ *   minio:9000          (bare host:port)
+ *   minio               (bare host)
+ * A scheme decides TLS; an explicit URL port wins over the configured port.
+ */
+export function normaliseEndpoint(
+  rawEndpoint: string,
+  fallbackPort: number,
+  fallbackUseSSL: boolean,
+): NormalisedEndpoint {
+  const raw = rawEndpoint.trim();
+
+  if (raw.includes('://')) {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`Invalid S3_ENDPOINT: ${rawEndpoint}`);
+    }
+    if (!url.hostname) {
+      throw new Error(`Invalid S3_ENDPOINT: ${rawEndpoint}`);
+    }
+    return {
+      host: url.hostname,
+      port: url.port ? Number(url.port) : fallbackPort,
+      useSSL: url.protocol === 'https:',
+    };
+  }
+
+  const separator = raw.lastIndexOf(':');
+  if (separator > 0) {
+    const host = raw.slice(0, separator);
+    const parsed = Number(raw.slice(separator + 1));
+    if (host && Number.isInteger(parsed) && parsed > 0) {
+      return { host, port: parsed, useSSL: fallbackUseSSL };
+    }
+  }
+
+  return { host: raw, port: fallbackPort, useSSL: fallbackUseSSL };
+}
+
 export class MinioStorageAdapter implements IStoragePort {
   private readonly client: Minio.Client;
   private readonly bucket: string;
 
   constructor(config: MinioConfig) {
+    const { host, port, useSSL } = normaliseEndpoint(
+      config.endPoint,
+      config.port,
+      config.useSSL,
+    );
     this.client = new Minio.Client({
-      endPoint: config.endPoint,
-      port: config.port,
-      useSSL: config.useSSL,
+      endPoint: host,
+      port,
+      useSSL,
       accessKey: config.accessKey,
       secretKey: config.secretKey,
     });

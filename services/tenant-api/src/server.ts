@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import fastifySensible from '@fastify/sensible';
 import fastifyMultipart from '@fastify/multipart';
 import fp from 'fastify-plugin';
+import { ZodError } from 'zod';
 import { Redis } from 'ioredis';
 import { loadConfig } from './config.js';
 import { getPrismaClient } from './infrastructure/prisma/PrismaClient.js';
@@ -43,6 +45,7 @@ import { flowsRoutes } from './interfaces/http/routes/flows.routes.js';
 import { kbRoutes } from './interfaces/http/routes/kb.routes.js';
 import { conversationsRoutes } from './interfaces/http/routes/conversations.routes.js';
 import { dryrunRoutes } from './interfaces/http/routes/dryrun.routes.js';
+import { formatIssues } from './interfaces/http/validation.js';
 import type { FastifyInstance } from 'fastify';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -228,12 +231,55 @@ export async function buildApp(): Promise<FastifyInstance> {
   );
 
   // Global error handler
+  //
+  // Anything still unhandled by a route lands here. Two classes of error must
+  // not become a 500:
+  //
+  //  1. Fastify's own client errors for malformed requests - unparsable JSON,
+  //     an empty body carrying `Content-Type: application/json`, an unsupported
+  //     media type, an unsupported method. They carry a 4xx `statusCode`, and
+  //     answering 500 blames the server for the caller's mistake. Schemathesis
+  //     reported every one of these as a server error against the isolated
+  //     stack before this branch existed.
+  //  2. A Zod issue that escaped a route's own `safeParse`.
   app.setErrorHandler((error, _request, reply) => {
+    const statusCode = typeof error.statusCode === 'number' ? error.statusCode : 0;
+
+    if (statusCode >= 400 && statusCode < 500) {
+      void reply.status(statusCode).send({
+        data: null,
+        error: {
+          code:
+            statusCode === 415
+              ? 'UNSUPPORTED_MEDIA_TYPE'
+              : statusCode === 405
+                ? 'METHOD_NOT_ALLOWED'
+                : 'INVALID_REQUEST',
+          message: error.message,
+        },
+        meta: { request_id: randomUUID() },
+      });
+      return;
+    }
+
+    if (error instanceof ZodError) {
+      void reply.status(400).send({
+        data: null,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Request validation failed',
+          details: formatIssues(error),
+        },
+        meta: { request_id: randomUUID() },
+      });
+      return;
+    }
+
     app.log.error({ err: error }, 'Unhandled error');
     void reply.status(500).send({
       data: null,
       error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' },
-      meta: {},
+      meta: { request_id: randomUUID() },
     });
   });
 

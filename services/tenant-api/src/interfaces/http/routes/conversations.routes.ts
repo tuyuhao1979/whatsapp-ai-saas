@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ListConversationsUseCase } from '../../../application/conversations/ListConversationsUseCase.js';
-import { ok, sendDomainError } from '../reply.js';
+import { invalidRequest, ok, sendDomainError } from '../reply.js';
+import { conversationsQuerySchema, formatIssues } from '../validation.js';
 
 interface ConversationRoutesDeps {
   listConversationsUseCase: ListConversationsUseCase;
@@ -22,14 +23,20 @@ export const conversationsRoutes: FastifyPluginAsync<ConversationRoutesDeps> = a
       offset?: string;
     };
   }>('/', async (request, reply) => {
+    const query = conversationsQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      invalidRequest(reply, formatIssues(query.error));
+      return;
+    }
+
     try {
       const result = await opts.listConversationsUseCase.execute({
         tenantId: request.tenantId,
-        waId: request.query.wa_id,
-        from: request.query.from,
-        to: request.query.to,
-        limit: request.query.limit ? parseInt(request.query.limit, 10) : undefined,
-        offset: request.query.offset ? parseInt(request.query.offset, 10) : undefined,
+        waId: query.data.wa_id,
+        from: query.data.from,
+        to: query.data.to,
+        limit: query.data.limit,
+        offset: query.data.offset,
       });
 
       ok(reply, {

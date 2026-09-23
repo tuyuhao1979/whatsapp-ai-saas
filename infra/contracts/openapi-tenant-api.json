@@ -1,0 +1,263 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "WhatsApp AI SaaS - tenant-api",
+    "version": "1.0.0",
+    "description": "Hand-maintained contract for the tenant-api public surface. It is intentionally authored rather than generated: the Fastify routes declare almost no JSON Schema, so a generated document would be nearly empty and would silently follow the app. Fidelity to the running app is enforced by tests/unit/OpenApiContract.test.ts, which fails if a registered route is missing here or documented here but absent from the app."
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "data": { "nullable": true, "type": "object" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          },
+          "meta": { "type": "object" }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["tenant_name", "email", "password"],
+        "properties": {
+          "tenant_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "email": { "type": "string", "format": "email", "maxLength": 254 },
+          "password": { "type": "string", "minLength": 12, "maxLength": 200 }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password", "tenant_slug"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 1 },
+          "tenant_slug": { "type": "string", "minLength": 1, "maxLength": 63 }
+        }
+      },
+      "ConnectWhatsAppRequest": {
+        "type": "object",
+        "required": ["waba_id", "phone_number_id", "access_token"],
+        "properties": {
+          "waba_id": { "type": "string", "minLength": 1 },
+          "phone_number_id": { "type": "string", "minLength": 1 },
+          "access_token": { "type": "string", "minLength": 1 }
+        }
+      },
+      "EmbeddedSignupCompleteRequest": {
+        "type": "object",
+        "required": ["code", "state"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "state": { "type": "string", "minLength": 1 },
+          "waba_id": { "type": "string" },
+          "phone_number_id": { "type": "string" }
+        }
+      },
+      "FlowNodeInput": {
+        "type": "object",
+        "required": ["node_key", "type"],
+        "properties": {
+          "node_key": { "type": "string", "minLength": 1 },
+          "type": {
+            "type": "string",
+            "enum": ["message", "interactive", "collect_input", "condition", "rag_lookup", "llm_generate", "api_call", "end"]
+          },
+          "config": { "type": "object" },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "next": { "type": "string" },
+                "condition": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "CreateFlowRequest": {
+        "type": "object",
+        "required": ["name", "trigger", "entry_node", "nodes"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "maxLength": 2000 },
+          "trigger": { "type": "object" },
+          "entry_node": { "type": "string", "minLength": 1 },
+          "nodes": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/components/schemas/FlowNodeInput" } }
+        }
+      },
+      "UpdateFlowRequest": {
+        "type": "object",
+        "description": "PUT /flows/:id carries a partial graph; every field is optional. Omitting a field leaves the stored value untouched.",
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "maxLength": 2000 },
+          "trigger": { "type": "object" },
+          "entry_node": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "nodes": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/components/schemas/FlowNodeInput" } }
+        }
+      },
+      "DryRunRequest": {
+        "type": "object",
+        "required": ["message", "simulated_wa_id"],
+        "properties": {
+          "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "simulated_wa_id": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": { "get": { "operationId": "health", "responses": { "200": { "description": "ok" } } } },
+    "/healthz": { "get": { "operationId": "healthz", "responses": { "200": { "description": "ok" } } } },
+    "/readyz": { "get": { "operationId": "readyz", "responses": { "200": { "description": "ready" }, "503": { "description": "dependency unavailable" } } } },
+
+    "/auth/register": {
+      "post": {
+        "operationId": "register",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterRequest" } } } },
+        "responses": {
+          "201": { "description": "registered" },
+          "400": { "description": "malformed or missing field", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "slug taken", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "422": { "description": "validation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "login",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
+        "responses": {
+          "200": { "description": "authenticated" },
+          "400": { "description": "malformed or missing field", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "invalid credentials", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/tenant": {
+      "get": { "operationId": "getTenant", "security": [{ "bearerAuth": [] }], "responses": { "200": { "description": "tenant" }, "401": { "description": "unauthorized" }, "404": { "description": "not found" } } },
+      "patch": {
+        "operationId": "updateTenant",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 120 } } } } } },
+        "responses": { "200": { "description": "updated" }, "400": { "description": "name missing, empty, or longer than 120 characters" }, "401": { "description": "unauthorized" } }
+      }
+    },
+    "/tenant/whatsapp/connect": {
+      "post": {
+        "operationId": "connectWhatsApp",
+        "security": [{ "bearerAuth": [] }],
+        "description": "Owner/admin only. The token's ownership of the WABA and phone number is verified against Meta before anything is stored.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectWhatsAppRequest" } } } },
+        "responses": {
+          "200": { "description": "connected" },
+          "400": { "description": "malformed body" },
+          "401": { "description": "unauthorized" },
+          "403": { "description": "ownership not proven or role too low" },
+          "409": { "description": "phone number held by another tenant" },
+          "502": { "description": "Meta API error" }
+        }
+      }
+    },
+
+    "/meta/embedded-signup/start": {
+      "post": {
+        "operationId": "startEmbeddedSignup",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "oauth state issued" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "422": { "description": "not configured" } }
+      }
+    },
+    "/meta/embedded-signup/complete": {
+      "post": {
+        "operationId": "completeEmbeddedSignup",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmbeddedSignupCompleteRequest" } } } },
+        "responses": {
+          "200": { "description": "onboarded" },
+          "400": { "description": "invalid or replayed oauth state, or Meta rejected the supplied code" },
+          "401": { "description": "unauthorized" },
+          "403": { "description": "ownership not proven" },
+          "409": { "description": "phone number held by another tenant" },
+          "502": { "description": "Meta API error" }
+        }
+      }
+    },
+    "/meta/connection": {
+      "get": { "operationId": "getMetaConnection", "security": [{ "bearerAuth": [] }], "responses": { "200": { "description": "connection status" }, "401": { "description": "unauthorized" } } }
+    },
+
+    "/flows": {
+      "get": { "operationId": "listFlows", "security": [{ "bearerAuth": [] }], "responses": { "200": { "description": "flows" }, "401": { "description": "unauthorized" } } },
+      "post": {
+        "operationId": "createFlow",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateFlowRequest" } } } },
+        "responses": { "201": { "description": "created" }, "400": { "description": "malformed flow graph" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "409": { "description": "a flow with that name already exists in this tenant" }, "422": { "description": "invalid graph" } }
+      }
+    },
+    "/flows/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "get": { "operationId": "getFlow", "security": [{ "bearerAuth": [] }], "responses": { "200": { "description": "flow" }, "400": { "description": "id is not a UUID" }, "401": { "description": "unauthorized" }, "404": { "description": "not found" } } },
+      "put": {
+        "operationId": "updateFlow",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateFlowRequest" } } } },
+        "responses": { "200": { "description": "updated" }, "400": { "description": "id is not a UUID, or the body is malformed" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "404": { "description": "not found" } }
+      },
+      "delete": { "operationId": "deleteFlow", "security": [{ "bearerAuth": [] }], "responses": { "204": { "description": "deleted" }, "400": { "description": "id is not a UUID" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "404": { "description": "not found" } } }
+    },
+    "/flows/{id}/activate": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "post": { "operationId": "activateFlow", "security": [{ "bearerAuth": [] }], "responses": { "200": { "description": "activated" }, "400": { "description": "id is not a UUID" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "404": { "description": "not found" } } }
+    },
+
+    "/kb/documents": {
+      "get": { "operationId": "listKbDocuments", "security": [{ "bearerAuth": [] }], "responses": { "200": { "description": "documents" }, "401": { "description": "unauthorized" } } },
+      "post": {
+        "operationId": "uploadKbDocument",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file", "name", "source_type"], "properties": { "file": { "type": "string", "format": "binary" }, "name": { "type": "string" }, "source_type": { "type": "string", "enum": ["text", "pdf", "faq_json", "markdown"] } } } } } },
+        "responses": { "201": { "description": "queued" }, "400": { "description": "name or source_type missing" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "415": { "description": "expected multipart/form-data" }, "422": { "description": "validation" } }
+      }
+    },
+    "/kb/documents/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+      "delete": { "operationId": "deleteKbDocument", "security": [{ "bearerAuth": [] }], "responses": { "204": { "description": "deleted" }, "400": { "description": "id is not a UUID" }, "401": { "description": "unauthorized" }, "403": { "description": "owner/admin required" }, "404": { "description": "not found" } } }
+    },
+
+    "/conversations": {
+      "get": {
+        "operationId": "listConversations",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "wa_id", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 64 } },
+          { "name": "from", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "required": false, "schema": { "type": "string", "format": "date-time" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } }
+        ],
+        "description": "Pagination and filtering. Unknown query parameters are rejected rather than ignored: a mistyped filter would otherwise silently return an unfiltered page.",
+        "responses": { "200": { "description": "conversation log" }, "400": { "description": "unknown query parameter, a non-integer limit/offset, or a from/to that is not RFC 3339" }, "401": { "description": "unauthorized" }, "422": { "description": "invalid date" } }
+      }
+    },
+    "/dry-run": {
+      "post": {
+        "operationId": "dryRun",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DryRunRequest" } } } },
+        "responses": { "200": { "description": "trace" }, "400": { "description": "message or simulated_wa_id missing or oversized" }, "401": { "description": "unauthorized" }, "502": { "description": "flow-engine unavailable" } }
+      }
+    }
+  }
+}

@@ -1,6 +1,10 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# openssl is required so `prisma generate` can resolve the OpenSSL 3 engine
+# (see binaryTargets in prisma/schema.prisma).
+RUN apk add --no-cache openssl
+
 # Install dependencies first for better layer caching
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
@@ -21,6 +25,11 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
+
+# libssl is what the Prisma query engine links against at runtime; without it
+# the container exits immediately with "Error loading shared library
+# libssl.so.1.1". wget is used by the HEALTHCHECK below.
+RUN apk add --no-cache openssl
 
 # Copy production artifacts only
 COPY --from=builder /app/dist ./dist

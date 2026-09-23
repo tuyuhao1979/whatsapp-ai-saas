@@ -21,6 +21,10 @@ build/
 .env
 # .env.example IS committed — do not add it here
 
+# Redis ACL rendered at container start from users.acl.tpl. It contains the
+# resolved passwords and is regenerated on every boot, so it is an artifact.
+infra/redis/users.acl
+
 # Build output
 dist/
 build/
@@ -62,3 +66,7 @@ logs/
 .turbo/
 .cache/
 .atl/
+
+# Verification / fuzzing artefacts
+.schemathesis/
+infra/verify/__pycache__/

@@ -5,6 +5,14 @@
 
 generator client {
   provider = "prisma-client-js"
+  // The service image is built FROM node:20-alpine, which ships OpenSSL 3.
+  // Without an explicit binaryTarget, `prisma generate` fetches the
+  // linux-musl engine linked against libssl.so.1.1, and the container dies at
+  // startup with:
+  //   Error loading shared library libssl.so.1.1: No such file or directory
+  //   (needed by .../libquery_engine-linux-musl.so.node)
+  // The openssl package is installed in services/tenant-api/Dockerfile.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -14,56 +22,26 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
-// Enums
+// No Postgres enum types
 // ---------------------------------------------------------------------------
-
-enum Plan {
-  free
-  pro
-  enterprise
-}
-
-enum TenantStatus {
-  active
-  suspended
-  offboarded
-}
-
-enum UserRole {
-  owner
-  admin
-  viewer
-}
-
-enum NodeType {
-  message
-  interactive
-  collect_input
-  condition
-  rag_lookup
-  llm_generate
-  api_call
-  end
-}
-
-enum SourceType {
-  text
-  pdf
-  faq_json
-  markdown
-}
-
-enum DocumentStatus {
-  pending
-  indexing
-  indexed
-  failed
-}
-
-enum Direction {
-  inbound
-  outbound
-}
+// The SQL migrations are authoritative for the schema and they model every
+// enumerated value as TEXT + a CHECK constraint (see infra/migrations/001, 002,
+// 003 and 004). They never CREATE TYPE anything.
+//
+// The Prisma schema previously declared Plan / TenantStatus / UserRole /
+// NodeType / SourceType / DocumentStatus / Direction as Prisma enums, which
+// makes Prisma emit `CAST(... AS "public"."Plan")` in the generated SQL against
+// a database that has no such type:
+//
+//   PostgresError { code: "42704",
+//                   message: 'type "public.Plan" does not exist' }
+//
+// Every INSERT/UPDATE on tenants, users, knowledge_base_documents and
+// conversation_logs therefore failed. Registration - the very first call any
+// tenant makes - could never succeed, with or without RLS.
+//
+// The allowed values remain enforced by the CHECK constraints in SQL, and the
+// TypeScript domain models still narrow them to string-literal unions.
 
 // ---------------------------------------------------------------------------
 // Tenant
@@ -76,8 +54,8 @@ model Tenant {
   wabaId        String?      @map("waba_id")
   phoneNumberId String?      @unique @map("phone_number_id")
   accessToken   String?      @map("access_token") // encrypted ciphertext (AES-256-GCM)
-  plan          Plan         @default(free)
-  status        TenantStatus @default(active)
+  plan          String       @default("free")
+  status        String       @default("active")
   createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -99,7 +77,7 @@ model User {
   tenantId     String   @map("tenant_id") @db.Uuid
   email        String
   passwordHash String   @map("password_hash")
-  role         UserRole @default(admin)
+  role         String   @default("admin")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -143,7 +121,7 @@ model FlowNode {
   flowId      String   @map("flow_id") @db.Uuid
   tenantId    String   @map("tenant_id") @db.Uuid
   nodeKey     String   @map("node_key")
-  type        NodeType
+  type        String
   config      Json
   transitions Json     @default("[]")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -164,9 +142,9 @@ model KnowledgeBaseDocument {
   id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId     String         @map("tenant_id") @db.Uuid
   name         String
-  sourceType   SourceType     @map("source_type")
+  sourceType   String         @map("source_type")
   storageUri   String         @map("storage_uri")
-  status       DocumentStatus @default(pending)
+  status       String         @default("pending")
   chunkCount   Int?           @map("chunk_count")
   errorMessage String?        @map("error_message")
   uploadedAt   DateTime       @default(now()) @map("uploaded_at") @db.Timestamptz
@@ -186,7 +164,7 @@ model ConversationLog {
   id          BigInt    @id @default(autoincrement())
   tenantId    String    @map("tenant_id") @db.Uuid
   waId        String    @map("wa_id")
-  direction   Direction
+  direction   String
   messageType String    @map("message_type")
   content     Json
   flowId      String?   @map("flow_id") @db.Uuid

@@ -1,0 +1,170 @@
+# Isolated verification stack — never point this at production.
+#
+# Differences from infra/docker-compose.yml, all deliberate:
+#   * its own compose project name and its own named volumes, so it cannot
+#     attach to or write into the production data volumes
+#   * every published port is bound to 127.0.0.1 on an unused high port
+#   * secrets are inline dummy values, not read from infra/.env
+#   * META_API_BASE points at the local mock Meta service, so no real Meta
+#     account, WhatsApp number, or customer token is ever contacted
+#   * only the two Node services run; flow-engine/rag-indexer are omitted
+#     because they pull torch (multi-GB). Dry-run therefore returns 502 here.
+#
+# Usage:
+#   docker compose -f infra/verify/docker-compose.verify.yml up -d --build
+
+name: waas-verify
+
+volumes:
+  verify_pg_data:
+  verify_redis_data:
+  verify_minio_data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:15432:5432"
+    environment:
+      POSTGRES_DB: whatsapp_saas
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: verify_postgres_pw
+    volumes:
+      - verify_pg_data:/var/lib/postgresql/data
+      # Migrations are applied explicitly (see infra/verify/run-verification.sh)
+      # so the schema under test is the one in the repo, not a snapshot.
+      - ../migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d whatsapp_saas"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:16379:6379"
+    environment:
+      REDIS_GATEWAY_PASSWORD: verify_gw_pw
+      REDIS_FLOW_ENGINE_PASSWORD: verify_fe_pw
+      REDIS_TENANT_API_PASSWORD: verify_ta_pw
+      REDIS_RAG_INDEXER_PASSWORD: verify_ri_pw
+      REDIS_DEFAULT_PASSWORD: verify_default_pw
+    entrypoint: >
+      /bin/sh -c "
+        apk add --no-cache gettext > /dev/null 2>&1;
+        grep -v '^[[:space:]]*#' /usr/local/etc/redis/users.acl.tpl | grep -v '^[[:space:]]*$$' > /tmp/acl.tpl;
+        envsubst < /tmp/acl.tpl > /usr/local/etc/redis/users.acl;
+        exec redis-server /usr/local/etc/redis/redis.conf
+      "
+    volumes:
+      - verify_redis_data:/data
+      - ../redis:/usr/local/etc/redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "verify_default_pw", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19000:9000"
+    environment:
+      MINIO_ROOT_USER: verifyminio
+      MINIO_ROOT_PASSWORD: verify_minio_pw
+    command: server /data
+    volumes:
+      - verify_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # NOTE: the upstream compose runs a `minio/mc` one-shot to create the KB
+  # bucket. That image tag is not available from every registry mirror, and the
+  # security assertions in this stack do not need object storage: KB *listing*
+  # and cross-tenant isolation are database-only. Upload therefore fails here,
+  # which is why the multi-tenant suite does not assert on upload success.
+
+  # Mock Meta Graph API. See infra/verify/mock_meta.py for the contract.
+  mock-meta:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - ./mock_meta.py:/app/mock_meta.py:ro
+    command: ["python", "/app/mock_meta.py"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8080/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  tenant-api:
+    build:
+      context: ../../services/tenant-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:13001:3001"
+    environment:
+      PORT: 3001
+      NODE_ENV: production
+      LOG_LEVEL: warn
+      DATABASE_URL: postgresql://app_user:verify_postgres_pw@postgres:5432/whatsapp_saas
+      DATABASE_MIGRATION_URL: postgresql://app_user:verify_postgres_pw@postgres:5432/whatsapp_saas
+      REDIS_URL: redis://tenant_api_user:verify_ta_pw@redis:6379/0
+      JWT_SECRET: verify_jwt_secret_at_least_32_characters_long
+      JWT_EXPIRES_IN: 12h
+      MASTER_KEY: verify_master_key_at_least_32_characters_long
+      S3_ENDPOINT: http://minio:9000
+      S3_PORT: 9000
+      S3_USE_SSL: "false"
+      S3_BUCKET_KB: kb-documents
+      S3_ACCESS_KEY: verifyminio
+      S3_SECRET_KEY: verify_minio_pw
+      FLOW_ENGINE_ADMIN_URL: http://tenant-api:3001
+      INTERNAL_API_TOKEN: verify_internal_token
+      CORS_ORIGINS: http://localhost:5173
+      META_APP_ID: app-123
+      META_APP_SECRET: test-app-secret
+      META_CONFIG_ID: config-123
+      META_API_BASE: http://mock-meta:8080/v21.0
+      META_EMBEDDED_SIGNUP_REDIRECT_URI: http://localhost:5173/meta/callback
+      OAUTH_STATE_TTL_SECONDS: "600"
+      META_REQUIRE_OWNERSHIP_PROOF: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ../../services/gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:13000:3000"
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      LOG_LEVEL: warn
+      META_APP_SECRET: test-app-secret
+      META_VERIFY_TOKEN: test-verify-token
+      REDIS_URL: redis://gateway_user:verify_gw_pw@redis:6379/0
+      POSTGRES_URL: postgresql://app_user:verify_postgres_pw@postgres:5432/whatsapp_saas
+      TENANT_CACHE_TTL_SECONDS: "300"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

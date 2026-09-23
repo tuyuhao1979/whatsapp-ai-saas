@@ -1,0 +1,94 @@
+name: Verify — isolated stack (multi-tenant + Schemathesis)
+
+# End-to-end verification against a throwaway environment: postgres + redis +
+# minio + a mock Meta Graph API, with tenant-api and gateway built from source.
+# No real Meta credential, WABA, or production data is involved.
+#
+# The two suites are complementary:
+#   * infra/e2e/test_multitenant.py drives RLS isolation, RBAC, WABA/phone
+#     ownership proof, the Embedded Signup state machine and webhook signature
+#     checks using real tenant ids and tokens.
+#   * Schemathesis fuzzes every operation in infra/contracts/openapi-tenant-api.json
+#     looking for 5xx responses (not_a_server_error) and for invalid data that
+#     the API accepts instead of rejecting (negative_data_rejection).
+
+on:
+  push:
+    paths:
+      - 'services/tenant-api/**'
+      - 'services/gateway/**'
+      - 'infra/contracts/**'
+      - 'infra/e2e/**'
+      - 'infra/verify/**'
+      - 'infra/redis/**'
+      - 'infra/migrations/**'
+      - '.github/workflows/verify-integration.yml'
+  pull_request:
+    paths:
+      - 'services/tenant-api/**'
+      - 'services/gateway/**'
+      - 'infra/contracts/**'
+      - 'infra/e2e/**'
+      - 'infra/verify/**'
+      - 'infra/redis/**'
+      - 'infra/migrations/**'
+      - '.github/workflows/verify-integration.yml'
+
+jobs:
+  verify:
+    name: isolated stack — multi-tenant + Schemathesis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Pinned: Schemathesis' CLI surface changes between majors.
+      - name: Install Schemathesis
+        run: pip install 'schemathesis==4.28.0'
+
+      - name: Build and start the verification stack
+        run: docker compose -f infra/verify/docker-compose.verify.yml up -d --build
+
+      - name: Wait for tenant-api
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:13001/api/v1/healthz > /dev/null; then
+              echo "tenant-api is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "tenant-api did not become healthy in time"
+          docker compose -f infra/verify/docker-compose.verify.yml ps
+          exit 1
+
+      - name: Multi-tenant isolation, RBAC and Meta onboarding
+        run: python3 infra/e2e/test_multitenant.py
+
+      - name: Schemathesis — no 5xx, invalid input rejected
+        run: |
+          RUN_ID=$(date +%s)
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:13001/api/v1/auth/register \
+            -H 'Content-Type: application/json' \
+            -d "{\"tenant_name\":\"CI Fuzz ${RUN_ID}\",\"email\":\"fuzz-${RUN_ID}@verify.test\",\"password\":\"MultiTenantTest1!\"}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["token"])')
+
+          schemathesis run infra/contracts/openapi-tenant-api.json \
+            --origin http://127.0.0.1:13001 \
+            -H "Authorization: Bearer ${TOKEN}" \
+            --checks not_a_server_error,negative_data_rejection \
+            --max-examples 30 \
+            --no-color
+
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose -f infra/verify/docker-compose.verify.yml logs --tail 200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/verify/docker-compose.verify.yml down -v
