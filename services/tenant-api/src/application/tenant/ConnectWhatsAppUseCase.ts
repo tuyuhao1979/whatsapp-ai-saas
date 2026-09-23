@@ -2,7 +2,7 @@ import { ConflictError, NotFoundError } from '../../domain/errors.js';
 import type { MetaConnectionResult } from '../../domain/models/MetaConnection.js';
 import type { IMetaGraphClient } from '../../domain/ports/IMetaGraphClient.js';
 import type { ITenantRepo } from '../../domain/ports/ITenantRepo.js';
-import { encrypt } from './encryption.js';
+import { encryptAccessToken, type MasterKeys } from './encryption.js';
 import { proveOwnership } from './metaOwnership.js';
 
 export interface ConnectWhatsAppInput {
@@ -18,7 +18,12 @@ export interface ConnectWhatsAppInput {
 }
 
 export interface ConnectWhatsAppOptions {
-  masterKey: string;
+  /**
+   * Current and (during a rotation) previous MASTER_KEY generations. See
+   * encryption.ts: the stored ciphertext is bound to the tenant and phone
+   * number, so the keys alone are not enough to decrypt it.
+   */
+  masterKeys: MasterKeys;
   requireOwnershipProof?: boolean;
   /** Meta app id the token must belong to, when known. */
   expectedAppId?: string | null;
@@ -37,7 +42,7 @@ export interface ConnectWhatsAppOptions {
  * number and thereafter receive its customers' messages).
  */
 export class ConnectWhatsAppUseCase {
-  private readonly masterKey: string;
+  private readonly masterKeys: MasterKeys;
   private readonly requireOwnershipProof: boolean;
   private readonly expectedAppId: string | null;
 
@@ -46,7 +51,7 @@ export class ConnectWhatsAppUseCase {
     private readonly metaClient: IMetaGraphClient,
     options: ConnectWhatsAppOptions,
   ) {
-    this.masterKey = options.masterKey;
+    this.masterKeys = options.masterKeys;
     this.requireOwnershipProof = options.requireOwnershipProof ?? true;
     this.expectedAppId = options.expectedAppId ?? null;
   }
@@ -83,8 +88,14 @@ export class ConnectWhatsAppUseCase {
     //    delivers messages, so the binding would look successful but be dead.
     await this.metaClient.subscribeAppToWaba(input.wabaId, input.accessToken);
 
-    // 4. Encrypt at rest and persist.
-    const encryptedToken = encrypt(input.accessToken, this.masterKey);
+    // 4. Encrypt at rest and persist. The ciphertext is bound to this tenant
+    //    and phone number as AEAD associated data (audit findings H1 + H6), so
+    //    copying it into another tenant's row fails authentication instead of
+    //    handing over a working token.
+    const encryptedToken = encryptAccessToken(input.accessToken, this.masterKeys, {
+      tenantId,
+      phoneNumberId: input.phoneNumberId,
+    });
     await this.tenantRepo.update(tenantId, {
       wabaId: input.wabaId,
       phoneNumberId: input.phoneNumberId,

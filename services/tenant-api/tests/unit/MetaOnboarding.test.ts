@@ -15,10 +15,12 @@ import {
   MetaOwnershipError,
   OAuthStateError,
 } from '../../src/domain/errors.js';
+import { masterKeysFromConfig } from '../../src/application/tenant/encryption.js';
 
 const TENANT_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_TENANT_ID = '22222222-2222-4222-8222-222222222222';
 const MASTER_KEY = 'k'.repeat(32);
+const MASTER_KEYS = masterKeysFromConfig({ masterKey: MASTER_KEY, masterKeyId: 'k1' });
 
 const PHONE: MetaPhoneNumber = {
   id: 'pn-1',
@@ -180,7 +182,7 @@ describe('proveOwnership (audit finding H2)', () => {
 describe('ConnectWhatsAppUseCase', () => {
   function build(repoOverrides: Partial<ITenantRepo> = {}, meta = fakeMeta()) {
     const repo = fakeTenantRepo(repoOverrides);
-    const useCase = new ConnectWhatsAppUseCase(repo, meta, { masterKey: MASTER_KEY });
+    const useCase = new ConnectWhatsAppUseCase(repo, meta, { masterKeys: MASTER_KEYS });
     return { repo, meta, useCase };
   }
 
@@ -241,7 +243,7 @@ describe('ConnectWhatsAppUseCase', () => {
 describe('CompleteMetaOnboardingUseCase', () => {
   function build(stateStore: IOAuthStateStore, meta = fakeMeta()) {
     const connect = new ConnectWhatsAppUseCase(fakeTenantRepo(), meta, {
-      masterKey: MASTER_KEY,
+      masterKeys: MASTER_KEYS,
     });
     return new CompleteMetaOnboardingUseCase(stateStore, meta, connect);
   }

@@ -8,7 +8,10 @@ import psycopg2
 import psycopg2.extras
 
 from flow_engine.domain.ports import ITenantCredentialsRepo
-from flow_engine.infrastructure.crypto import decrypt_aes256_gcm
+from flow_engine.infrastructure.crypto import (
+    MasterKeys,
+    decrypt_access_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +19,9 @@ _CACHE_TTL_S = 300.0
 
 
 class PostgresTenantCredentialsRepo(ITenantCredentialsRepo):
-    def __init__(self, connection_string: str, master_key: str) -> None:
+    def __init__(self, connection_string: str, keys: MasterKeys) -> None:
         self._conn_string = connection_string
-        self._master_key = master_key
+        self._keys = keys
         self._cache: dict[tuple[str, str], tuple[float, str]] = {}
 
     def _connect(self) -> psycopg2.extensions.connection:
@@ -59,6 +62,9 @@ class PostgresTenantCredentialsRepo(ITenantCredentialsRepo):
         if not ciphertext:
             return None
 
-        access_token = decrypt_aes256_gcm(ciphertext, self._master_key)
+        # The ciphertext is bound to this tenant and phone number as AEAD
+        # associated data (audit findings H1 + H6): a token copied into another
+        # tenant's row fails authentication rather than being used.
+        access_token = decrypt_access_token(ciphertext, self._keys, tenant_id, phone_number_id)
         self._cache[cache_key] = (now + _CACHE_TTL_S, access_token)
         return access_token

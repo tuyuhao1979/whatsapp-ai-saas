@@ -48,8 +48,11 @@ jobs:
           python-version: '3.12'
 
       # Pinned: Schemathesis' CLI surface changes between majors.
+      # `cryptography` is needed by infra/e2e/verify_token_crypto.py, which
+      # imports flow-engine's decryptor to prove both services agree on the
+      # access-token envelope.
       - name: Install Schemathesis
-        run: pip install 'schemathesis==4.28.0'
+        run: pip install 'schemathesis==4.28.0' cryptography
 
       # Pull the base images up front with retries. Shared CI runners hit Docker
       # Hub anonymous-pull denials intermittently; without this the whole job
@@ -74,6 +77,12 @@ jobs:
 
       - name: Multi-tenant isolation, RBAC and Meta onboarding
         run: python3 infra/e2e/test_multitenant.py
+
+      # Covers audit findings H1 + H6: the stored access token must be bound to
+      # its row (a ciphertext copied to another tenant must fail to decrypt),
+      # keyed per tenant, and migratable off a legacy v1 ciphertext.
+      - name: Access-token envelope (row binding, key ids, v1 -> v2 migration)
+        run: python3 infra/e2e/verify_token_crypto.py
 
       - name: Schemathesis — no 5xx, invalid input rejected
         run: |

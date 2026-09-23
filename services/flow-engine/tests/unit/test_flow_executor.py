@@ -178,12 +178,18 @@ class TestInFlowContinuation:
             id="collect",
             node_type="collect_input",
             config={"slot": "name", "prompt": "Name?"},
-            transitions=[{"condition": "default", "next_node": "end"}],
+            transitions=[{"condition": "default", "next_node": "confirm"}],
         )
-        end_node = FlowNode(
-            id="end",
-            node_type="end",
-            config={"content": "Done!"},
+        # A `message` node rather than `end`: finishing a flow deliberately
+        # clears the slots (see TestEndNodeResetsState), so asserting slot
+        # contents after an `end` node contradicts that and could never pass.
+        # Asserting them while the flow is still live is what this test means.
+        confirm_node = FlowNode(
+            id="confirm",
+            node_type="message",
+            # format_map over session.slots raises KeyError if the answer was
+            # not captured, so the placeholder is part of the assertion.
+            config={"content": "Thanks {name}!"},
             transitions=[],
         )
         flow = Flow(
@@ -192,14 +198,15 @@ class TestInFlowContinuation:
             name="Collect Flow",
             trigger={"type": "always"},
             entry_node="collect",
-            nodes={"collect": collect_node, "end": end_node},
+            nodes={"collect": collect_node, "confirm": confirm_node},
             is_active=True,
         )
         executor, _, _ = _make_executor(flows=[flow])
         session = _session(state="IN_FLOW", flow_id="f1", current_node="collect")
         executor.execute(_message("Alice"), session)
         assert session.slots.get("name") == "Alice"
-        assert session.state == "IDLE"  # end node resets
+        assert session.current_node == "confirm"
+        assert session.state == "IN_FLOW"
 
 
 class TestEndNodeResetsState:

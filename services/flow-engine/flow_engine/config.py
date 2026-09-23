@@ -45,6 +45,9 @@ class Config:
     log_level: str
     flow_engine_port: int
     master_key: str  # AES-256-GCM key for decrypting access_tokens
+    master_key_id: str  # key id new ciphertexts carry (envelope `kid`)
+    master_key_previous: str | None  # previous key, during a rotation
+    master_key_previous_id: str
     mode: str  # both | consumer | admin
     meta_api_base: str
     store_message_body: bool
@@ -85,6 +88,12 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         log_level=source.get("LOG_LEVEL", "INFO"),
         flow_engine_port=int(source.get("FLOW_ENGINE_PORT", "8001")),
         master_key=source["MASTER_KEY"],
+        # Rotation (audit finding H6): the id names the generation new
+        # ciphertexts carry; the previous key keeps rows written before a
+        # rotation readable until they are re-encrypted by tenant-api.
+        master_key_id=source.get("MASTER_KEY_ID", "k1"),
+        master_key_previous=source.get("MASTER_KEY_PREVIOUS") or None,
+        master_key_previous_id=source.get("MASTER_KEY_PREVIOUS_ID", "k0"),
         mode=mode,
         meta_api_base=source.get(
             "META_API_BASE", "https://graph.facebook.com/v21.0"

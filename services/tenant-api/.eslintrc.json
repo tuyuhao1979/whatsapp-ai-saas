@@ -37,6 +37,15 @@
       }
     },
     {
+      "files": ["src/scripts/**/*.ts"],
+      "rules": {
+        // Operator-facing one-shot scripts: stdout/stderr *is* the interface,
+        // and they run outside the request lifecycle where the service logger
+        // is available.
+        "no-console": "off"
+      }
+    },
+    {
       "files": ["tests/**/*.ts"],
       "rules": {
         // jest.spyOn/expect(mock.method) reference methods deliberately.

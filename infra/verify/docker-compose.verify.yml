@@ -134,6 +134,9 @@ services:
       JWT_SECRET: verify_jwt_secret_at_least_32_characters_long
       JWT_EXPIRES_IN: 12h
       MASTER_KEY: verify_master_key_at_least_32_characters_long
+      # Key id carried by new ciphertexts (H6). infra/e2e/verify_token_crypto.py
+      # asserts the stored envelope starts with `v2.<this id>.`
+      MASTER_KEY_ID: k1
       S3_ENDPOINT: http://minio:9000
       S3_PORT: 9000
       S3_USE_SSL: "false"

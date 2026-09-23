@@ -35,7 +35,7 @@ const configSchema = z.object({
     .default('true')
     .transform((v) => v === 'true' || v === '1'),
 
-  // Encryption
+  // Encryption (audit findings H1 + H6)
   MASTER_KEY: z
     .string()
     .min(32, 'MASTER_KEY must be at least 32 bytes (hex-encoded or raw)')
@@ -43,6 +43,18 @@ const configSchema = z.object({
       (v) => Buffer.from(v, 'utf8').length >= 32,
       'MASTER_KEY must encode to at least 32 bytes',
     ),
+  // Rotation. New ciphertexts carry MASTER_KEY_ID as their key id; setting
+  // MASTER_KEY_PREVIOUS keeps rows encrypted with the old key readable until
+  // scripts/reencrypt-access-tokens.ts has rewritten them.
+  MASTER_KEY_ID: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,16}$/, 'MASTER_KEY_ID must be 1-16 chars of [A-Za-z0-9_-]')
+    .default('k1'),
+  MASTER_KEY_PREVIOUS: z.string().min(32).optional(),
+  MASTER_KEY_PREVIOUS_ID: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,16}$/, 'MASTER_KEY_PREVIOUS_ID must be 1-16 chars of [A-Za-z0-9_-]')
+    .default('k0'),
 
   // MinIO / S3
   S3_ENDPOINT: z.string().min(1, 'S3_ENDPOINT is required'),

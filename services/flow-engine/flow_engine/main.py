@@ -25,6 +25,7 @@ from sentence_transformers import SentenceTransformer
 from flow_engine.application.flow_executor import FlowExecutor
 from flow_engine.config import Config, load_config
 from flow_engine.infrastructure.chroma.chroma_retriever import ChromaRetriever
+from flow_engine.infrastructure.crypto import KeyGeneration, MasterKeys
 from flow_engine.infrastructure.llm.langchain_llm import LangChainLLMPort
 from flow_engine.infrastructure.meta.meta_send_client import MetaSendClient
 from flow_engine.infrastructure.postgres.postgres_conv_log import PostgresConvLogRepo
@@ -103,7 +104,14 @@ def main() -> None:
     message_status_repo = PostgresMessageStatusRepo(connection_string=cfg.database_url)
     tenant_credentials_repo = PostgresTenantCredentialsRepo(
         connection_string=cfg.database_url,
-        master_key=cfg.master_key,
+        keys=MasterKeys(
+            current=KeyGeneration(id=cfg.master_key_id, key=cfg.master_key),
+            previous=(
+                KeyGeneration(id=cfg.master_key_previous_id, key=cfg.master_key_previous)
+                if cfg.master_key_previous
+                else None
+            ),
+        ),
     )
     meta_send = MetaSendClient(base_url=cfg.meta_api_base)
     vector_store = ChromaRetriever(

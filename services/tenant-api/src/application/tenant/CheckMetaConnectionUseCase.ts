@@ -2,7 +2,7 @@ import type { MetaConnectionStatus } from '../../domain/models/MetaConnection.js
 import type { IMetaGraphClient } from '../../domain/ports/IMetaGraphClient.js';
 import type { ITenantRepo } from '../../domain/ports/ITenantRepo.js';
 import { NotFoundError } from '../../domain/errors.js';
-import { decrypt } from './encryption.js';
+import { decryptAccessToken, type MasterKeys } from './encryption.js';
 
 /**
  * Reports the live health of a tenant's WhatsApp binding.
@@ -18,7 +18,7 @@ export class CheckMetaConnectionUseCase {
   constructor(
     private readonly tenantRepo: ITenantRepo,
     private readonly metaClient: IMetaGraphClient,
-    private readonly masterKey: string,
+    private readonly masterKeys: MasterKeys,
     private readonly appId: string,
   ) {}
 
@@ -49,7 +49,10 @@ export class CheckMetaConnectionUseCase {
     };
 
     try {
-      const token = decrypt(tenant.accessToken, this.masterKey);
+      const token = decryptAccessToken(tenant.accessToken, this.masterKeys, {
+        tenantId,
+        phoneNumberId: tenant.phoneNumberId,
+      });
 
       const phone = await this.metaClient.getPhoneNumber(tenant.phoneNumberId, token);
       status.displayPhoneNumber = phone.displayPhoneNumber;

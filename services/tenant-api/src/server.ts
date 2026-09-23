@@ -45,6 +45,7 @@ import { kbRoutes } from './interfaces/http/routes/kb.routes.js';
 import { conversationsRoutes } from './interfaces/http/routes/conversations.routes.js';
 import { dryrunRoutes } from './interfaces/http/routes/dryrun.routes.js';
 import { formatIssues } from './interfaces/http/validation.js';
+import { masterKeysFromConfig } from './application/tenant/encryption.js';
 import type { FastifyInstance } from 'fastify';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -114,6 +115,15 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const embeddedSignupAvailable = Boolean(config.META_APP_ID && config.META_CONFIG_ID);
 
+  // Key set for the WhatsApp access token at rest (H1 + H6). Built once, so a
+  // rotation touches only the environment.
+  const masterKeys = masterKeysFromConfig({
+    masterKey: config.MASTER_KEY,
+    masterKeyId: config.MASTER_KEY_ID,
+    previousMasterKey: config.MASTER_KEY_PREVIOUS,
+    previousMasterKeyId: config.MASTER_KEY_PREVIOUS_ID,
+  });
+
   // ---------------------------------------------------------------------------
   // Use cases
   // ---------------------------------------------------------------------------
@@ -122,7 +132,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const getTenantUseCase = new GetTenantUseCase(tenantRepo);
   const updateTenantUseCase = new UpdateTenantUseCase(tenantRepo);
   const connectWhatsAppUseCase = new ConnectWhatsAppUseCase(tenantRepo, metaClient, {
-    masterKey: config.MASTER_KEY,
+    masterKeys,
     requireOwnershipProof: config.META_REQUIRE_OWNERSHIP_PROOF,
     expectedAppId: config.META_APP_ID || null,
   });
@@ -140,7 +150,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const checkMetaConnectionUseCase = new CheckMetaConnectionUseCase(
     tenantRepo,
     metaClient,
-    config.MASTER_KEY,
+    masterKeys,
     config.META_APP_ID,
   );
   const createFlowUseCase = new CreateFlowUseCase(flowRepo, flowEngineClient);
