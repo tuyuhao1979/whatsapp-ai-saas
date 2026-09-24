@@ -116,11 +116,15 @@ The gateway **never** calls flow-engine HTTP; all coupling is through Redis. The
 
 ### Multi-tenancy (RLS)
 
-All tenant-scoped tables have PostgreSQL Row Level Security enabled (`infra/migrations/005_enable_rls.sql`). The policy evaluates `current_setting('app.tenant_id', true)`. Every database transaction in `tenant-api` must call `SET LOCAL app.tenant_id = '<uuid>'` before querying; missing this causes silent denial (the GUC returns NULL on unset, which fails the cast to uuid and blocks the row).
+All tenant-scoped tables have PostgreSQL Row Level Security enabled (`infra/migrations/005_enable_rls.sql`), `tenants` itself included (`007_tenants_rls.sql`). Every policy evaluates `nullif(current_setting('app.tenant_id', true), '')::uuid` (see `009_rls_policy_empty_setting.sql`): an unset *or* empty setting denies every row rather than raising a uuid cast error on a pooled connection.
+
+`tenant-api` never issues `SET LOCAL` by hand. The Prisma client extension in `infrastructure/prisma/PrismaClient.ts` wraps each tenant-scoped operation in a transaction that calls `set_config('app.tenant_id', <uuid>, true)`; the uuid comes from an `AsyncLocalStorage` store that `authPlugin.authenticate` populates once the JWT is verified. The two lookups that legitimately cross tenants — login by slug and gateway by `phone_number_id` — go through `SECURITY DEFINER` functions (`lookup_tenant_by_slug`, `tenant_id_for_phone`).
 
 Two DB connection strings exist:
-- `DATABASE_URL` â€” `app_user` role, RLS enforced, used at runtime
-- `DATABASE_MIGRATION_URL` â€” migrator role with `BYPASSRLS`, used only for `make migrate`
+- `DATABASE_URL` -- `app_runtime` role, no SUPERUSER / BYPASSRLS, RLS enforced, used at runtime
+- `DATABASE_MIGRATION_URL` -- `app_user` (bootstrap superuser, owns the schema), used only for `make migrate`
+
+The runtime role is created by `infra/postgres/init/00-runtime-role.sql` on a fresh cluster and by `008_runtime_role.sql` on an existing one.
 
 Migrations live in `infra/migrations/` as plain SQL files â€” **not** Prisma migrations. The Prisma schema (`services/tenant-api/prisma/schema.prisma`) mirrors the SQL schema and is used only for type generation and Prisma Client queries.
 

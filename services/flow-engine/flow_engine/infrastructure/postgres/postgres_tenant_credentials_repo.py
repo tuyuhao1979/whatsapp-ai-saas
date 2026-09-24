@@ -38,6 +38,11 @@ class PostgresTenantCredentialsRepo(ITenantCredentialsRepo):
             return cached[1]
 
         with self._connect() as conn, conn.cursor() as cur:
+            # `tenants` is under FORCE ROW LEVEL SECURITY (migration 007) and the
+            # runtime role is not a superuser, so the tenant context must be
+            # established or this SELECT returns no row and the flow engine can
+            # never send a message. set_config(..., true) is transaction-local.
+            cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
             cur.execute(
                 """
                     SELECT access_token

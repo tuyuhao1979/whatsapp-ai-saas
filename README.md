@@ -122,7 +122,8 @@ Copy `infra/.env.example` to `infra/.env` and fill in the values below.
 | `JWT_SECRET` | tenant-api | HS256 signing secret (min 32 chars) | YES | `openssl rand -hex 32` |
 | `MASTER_KEY` | tenant-api, flow-engine | AES-256 key for encrypting WhatsApp access tokens at rest (min 32 bytes) | YES | `openssl rand -hex 32` |
 | `INTERNAL_API_TOKEN` | tenant-api, flow-engine | Shared secret for tenant-api → flow-engine admin calls | YES | `openssl rand -hex 32` |
-| `DATABASE_URL` | tenant-api | PostgreSQL connection string (app_user, no BYPASSRLS) | YES | `postgresql://app_user:pass@postgres:5432/saas` |
+| `DATABASE_URL` | tenant-api, flow-engine, gateway, rag-indexer | PostgreSQL connection string (app_runtime, no SUPERUSER / BYPASSRLS, so RLS applies) | YES | `postgresql://app_runtime:pass@postgres:5432/saas` |
+| `DATABASE_MIGRATION_URL` | tenant-api | Migration connection string (app_user, owns the schema) | YES | `postgresql://app_user:pass@postgres:5432/saas` |
 | `REDIS_URL` | all services | Redis connection string | YES | `redis://:pass@redis:6379/0` |
 | `CHROMA_HOST` | flow-engine, rag-indexer | ChromaDB service hostname | YES | `chromadb` |
 | `S3_ENDPOINT` | tenant-api, rag-indexer | MinIO/S3 endpoint | YES | `http://minio:9000` |

@@ -37,7 +37,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(TENANT),
-      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
+      findTenantIdByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -66,7 +66,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(null),
-      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
+      findTenantIdByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -86,7 +86,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(TENANT),
-      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
+      findTenantIdByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };
@@ -109,7 +109,7 @@ describe('LoginUseCase', () => {
     const tenantRepo: ITenantRepo = {
       findById: jest.fn(),
       findBySlug: jest.fn().mockResolvedValue(TENANT),
-      findByPhoneNumberId: jest.fn().mockResolvedValue(null),
+      findTenantIdByPhoneNumberId: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
       update: jest.fn(),
     };

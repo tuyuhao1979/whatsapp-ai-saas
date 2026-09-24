@@ -19,8 +19,14 @@ const KEY_PREFIX = 'tenant:by_phone:';
  *   GET tenant:by_phone:{phoneNumberId} → return cached tenant UUID
  *
  * Cache miss path (~10ms):
- *   SELECT id FROM tenants WHERE phone_number_id = $1
- *   → SET tenant:by_phone:{phoneNumberId} EX {ttl} → return UUID
+ *   SELECT tenant_id_for_phone($1) → SET tenant:by_phone:{phoneNumberId} EX {ttl}
+ *   → return UUID
+ *
+ * The miss path is the one read that cannot use a tenant context: the whole
+ * point is to discover which tenant a phone number belongs to. Since migration
+ * 007 `tenants` is under FORCE ROW LEVEL SECURITY, so it goes through the
+ * SECURITY DEFINER function, which returns the tenant id and nothing else — the
+ * gateway never needs the WABA binding or the encrypted access token.
  *
  * Throws TenantNotFoundError if the phone number ID is unknown in the DB.
  */
@@ -44,9 +50,9 @@ export class RedisTenantCache implements ITenantCache {
       return cached;
     }
 
-    // Cache miss — query Postgres
-    const result = await this.postgres.query<{ id: string }>(
-      'SELECT id FROM tenants WHERE phone_number_id = $1 LIMIT 1',
+    // Cache miss — query Postgres through the SECURITY DEFINER lookup
+    const result = await this.postgres.query<{ tenant_id: string | null }>(
+      'SELECT tenant_id_for_phone($1) AS tenant_id',
       [phoneNumberId],
     );
 
@@ -54,7 +60,7 @@ export class RedisTenantCache implements ITenantCache {
       throw new TenantNotFoundError(phoneNumberId);
     }
 
-    const tenantId = result.rows[0]?.id;
+    const tenantId = result.rows[0]?.tenant_id;
     if (!tenantId) {
       throw new TenantNotFoundError(phoneNumberId);
     }

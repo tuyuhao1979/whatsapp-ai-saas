@@ -2,7 +2,11 @@ import { PrismaClient as BasePrismaClient } from '@prisma/client';
 import { getCurrentTenantId, tenantContext } from './tenantContext.js';
 
 // Tenant-scoped models that require RLS SET LOCAL before every query.
+// `tenant` is included since migration 007: `tenants` holds the encrypted
+// WhatsApp access token and the WABA/phone binding, so it is exactly the table
+// that must not be readable across tenants by a query that forgot its predicate.
 const TENANT_SCOPED_MODELS = new Set([
+  'tenant',
   'user',
   'flow',
   'flowNode',
@@ -26,51 +30,67 @@ export function isValidTenantId(value: unknown): value is string {
 let _instance: BasePrismaClient | null = null;
 
 /**
- * Singleton Prisma client with RLS middleware.
+ * Singleton Prisma client that establishes the RLS context for every query on a
+ * tenant-scoped model.
  *
- * For every query on a tenant-scoped model, wraps the operation in a
- * transaction that first sets the RLS GUC:
- *   SELECT set_config('app.tenant_id', $1, true)
+ * Two things matter here, and the previous implementation got the second one
+ * wrong:
  *
- * The value is always *bound as a parameter* — never interpolated into SQL
- * text (audit finding H4: the previous `$executeRawUnsafe` with string
- * concatenation was an injection sink reachable through a forged JWT claim).
+ *  1. The value comes from AsyncLocalStorage, and is always *bound as a
+ *     parameter* — never interpolated into SQL text (audit finding H4: the
+ *     earlier `$executeRawUnsafe` with string concatenation was an injection
+ *     sink reachable through a forged JWT claim).
+ *  2. The `set_config` and the query must run on the *same connection*. The
+ *     earlier version was `$use` middleware that called `next(params)` inside a
+ *     `$transaction` callback: `next(params)` goes back through the root client
+ *     and checks out a different pooled connection, so the transaction-local
+ *     GUC never applied to the query. That was invisible for as long as the
+ *     runtime role was the bootstrap superuser — superusers bypass row security
+ *     unconditionally — and it denies every row the moment the runtime role is
+ *     an ordinary role (audit finding H1). `$extends` is used instead, and the
+ *     model operation is dispatched on the transaction client `tx`.
  *
- * The tenantId is read from AsyncLocalStorage, so it is never taken from a
- * request body.
- *
- * NOTE: DATABASE_URL must use the `app_user` role (no BYPASSRLS).
+ * NOTE: DATABASE_URL must use the `app_runtime` role (no SUPERUSER, no
+ * BYPASSRLS).
  */
 export function getPrismaClient(): BasePrismaClient {
   if (_instance) return _instance;
 
-  _instance = new BasePrismaClient({
+  const base = new BasePrismaClient({
     log: process.env['NODE_ENV'] === 'development' ? ['warn', 'error'] : ['error'],
   });
 
-  _instance.$use(async (params, next) => {
-    const model = params.model?.toLowerCase();
+  const extended = base.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          const name = model?.toLowerCase();
+          if (!name || !TENANT_SCOPED_MODELS.has(name)) {
+            return query(args);
+          }
 
-    if (!model || !TENANT_SCOPED_MODELS.has(model)) {
-      return next(params);
-    }
+          const tenantId = getCurrentTenantId();
+          if (!isValidTenantId(tenantId)) {
+            // No (or malformed) tenant context — RLS will block all rows.
+            // Failing closed here is deliberate: it keeps an unset or tampered
+            // context from ever reaching the database.
+            return query(args);
+          }
 
-    const tenantId = getCurrentTenantId();
-
-    if (!isValidTenantId(tenantId)) {
-      // No (or malformed) tenant context — RLS will block all rows. Failing
-      // closed here is deliberate: it keeps an unset or tampered context from
-      // ever reaching the database.
-      return next(params);
-    }
-
-    // Wrap in an interactive transaction so the GUC is set before the query
-    // runs and is scoped to that transaction only.
-    return _instance!.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
-      return next(params);
-    });
+          return base.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
+            const delegate = (
+              tx as unknown as Record<string, Record<string, (a: unknown) => Promise<unknown>>>
+            )[name];
+            if (!delegate) return query(args);
+            return delegate[operation]?.(args);
+          });
+        },
+      },
+    },
   });
+
+  _instance = extended as unknown as BasePrismaClient;
 
   return _instance;
 }

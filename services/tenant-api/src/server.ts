@@ -36,7 +36,6 @@ import { ListConversationsUseCase } from './application/conversations/ListConver
 import { DryRunUseCase } from './application/dryrun/DryRunUseCase.js';
 import { authPlugin } from './interfaces/http/plugins/authPlugin.js';
 import { authorizePlugin } from './interfaces/http/plugins/authorizePlugin.js';
-import { rlsPlugin } from './interfaces/http/plugins/rlsPlugin.js';
 import { authRoutes } from './interfaces/http/routes/auth.routes.js';
 import { tenantRoutes } from './interfaces/http/routes/tenant.routes.js';
 import { metaRoutes } from './interfaces/http/routes/meta.routes.js';
@@ -70,9 +69,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // RBAC plugin (consumes the role claim the auth plugin binds)
   await app.register(authorizePlugin);
-
-  // RLS plugin (sets AsyncLocalStorage per request)
-  await app.register(rlsPlugin);
 
   // ---------------------------------------------------------------------------
   // Infrastructure adapters

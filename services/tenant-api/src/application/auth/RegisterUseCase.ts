@@ -1,4 +1,5 @@
 import argon2 from 'argon2';
+import { randomUUID } from 'node:crypto';
 import { withTenantContext } from '../../infrastructure/prisma/PrismaClient.js';
 import type { ITenantRepo } from '../../domain/ports/ITenantRepo.js';
 import type { IUserRepo } from '../../domain/ports/IUserRepo.js';
@@ -53,7 +54,15 @@ export class RegisterUseCase {
       parallelism: 1,
     });
 
-    const tenant = await this.tenantRepo.create({ name: input.tenantName, slug });
+    // `tenants` is under FORCE ROW LEVEL SECURITY with the policy
+    // `id = current_setting('app.tenant_id')`, so the id must exist before the
+    // INSERT and the context must be established around it (audit finding H1).
+    // Generating the id here rather than relying on the column default is what
+    // makes that possible.
+    const tenantId = randomUUID();
+    const tenant = await withTenantContext(tenantId, () =>
+      this.tenantRepo.create({ id: tenantId, name: input.tenantName, slug }),
+    );
 
     // `users` is under FORCE ROW LEVEL SECURITY and this request has no tenant
     // context yet, so the INSERT must run inside the freshly created tenant's

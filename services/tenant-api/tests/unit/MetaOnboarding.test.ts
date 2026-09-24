@@ -73,7 +73,7 @@ function fakeTenantRepo(overrides: Partial<ITenantRepo> = {}): ITenantRepo {
   return {
     findById: jest.fn().mockResolvedValue(fakeTenant()),
     findBySlug: jest.fn().mockResolvedValue(null),
-    findByPhoneNumberId: jest.fn().mockResolvedValue(null),
+    findTenantIdByPhoneNumberId: jest.fn().mockResolvedValue(null),
     create: jest.fn(),
     update: jest.fn().mockResolvedValue(fakeTenant()),
     ...overrides,
@@ -206,9 +206,9 @@ describe('ConnectWhatsAppUseCase', () => {
 
   it('refuses a phone number already claimed by another tenant', async () => {
     const { useCase, meta } = build({
-      findByPhoneNumberId: jest
+      findTenantIdByPhoneNumberId: jest
         .fn()
-        .mockResolvedValue(fakeTenant({ id: OTHER_TENANT_ID, phoneNumberId: 'pn-1' })),
+        .mockResolvedValue(OTHER_TENANT_ID),
     });
 
     await expect(
@@ -225,9 +225,7 @@ describe('ConnectWhatsAppUseCase', () => {
 
   it('allows re-connecting a number the same tenant already holds', async () => {
     const { useCase } = build({
-      findByPhoneNumberId: jest
-        .fn()
-        .mockResolvedValue(fakeTenant({ id: TENANT_ID, phoneNumberId: 'pn-1' })),
+      findTenantIdByPhoneNumberId: jest.fn().mockResolvedValue(TENANT_ID),
     });
 
     await expect(

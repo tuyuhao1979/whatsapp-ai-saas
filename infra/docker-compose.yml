@@ -19,11 +19,17 @@ volumes:
 # ---------------------------------------------------------------------------
 x-postgres-env: &postgres-env
   POSTGRES_DB: whatsapp_saas
+  # Bootstrap superuser: owns the schema and runs migrations only.
   POSTGRES_USER: app_user
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  # Password for the non-superuser runtime role (app_runtime), created by
+  # infra/postgres/init/00-runtime-role.sql. Services connect as app_runtime so
+  # that RLS actually applies to them: a superuser bypasses row security
+  # unconditionally, FORCE ROW LEVEL SECURITY included (audit finding H1).
+  POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD}
 
 x-app-postgres-url: &app-postgres-url
-  POSTGRES_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
+  POSTGRES_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
 
 x-redis-url: &redis-url
   REDIS_URL: redis://flow_engine_user:${REDIS_FLOW_ENGINE_PASSWORD}@redis:6379/0
@@ -41,6 +47,9 @@ services:
       <<: *postgres-env
     volumes:
       - pg_data:/var/lib/postgresql/data
+      # Creates the non-superuser runtime role on first start. Existing clusters
+      # get the same state from migration 008.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app_user -d whatsapp_saas"]
       interval: 5s
@@ -177,7 +186,10 @@ services:
       META_APP_SECRET: ${META_APP_SECRET}
       META_VERIFY_TOKEN: ${META_VERIFY_TOKEN}
       REDIS_URL: redis://gateway_user:${REDIS_GATEWAY_PASSWORD}@redis:6379/0
-      POSTGRES_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
+      # app_runtime only: the gateway resolves a tenant through the
+      # SECURITY DEFINER function tenant_id_for_phone(), so it never needs to
+      # read `tenants` directly — and must not be able to (audit finding H1).
+      POSTGRES_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
       TENANT_CACHE_TTL_SECONDS: ${TENANT_CACHE_TTL_SECONDS:-300}
       STREAM_MAXLEN_APPROX: ${STREAM_MAXLEN_APPROX:-10000}
     depends_on:
@@ -200,7 +212,7 @@ services:
       PORT: 3001
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DATABASE_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
+      DATABASE_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
       DATABASE_MIGRATION_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
       REDIS_URL: redis://tenant_api_user:${REDIS_TENANT_API_PASSWORD}@redis:6379/0
       JWT_SECRET: ${JWT_SECRET}
@@ -250,8 +262,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       REDIS_URL: redis://flow_engine_user:${REDIS_FLOW_ENGINE_PASSWORD}@redis:6379/0
       # Both names are injected so either service-side reader works.
-      DATABASE_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
-      POSTGRES_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
+      DATABASE_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
+      POSTGRES_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000
       META_API_BASE: ${META_API_BASE:-https://graph.facebook.com/v21.0}
@@ -368,8 +380,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       REDIS_URL: redis://rag_indexer_user:${REDIS_RAG_INDEXER_PASSWORD}@redis:6379/0
       # Both names are injected so either service-side reader works.
-      DATABASE_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
-      POSTGRES_URL: postgresql://app_user:${POSTGRES_PASSWORD}@postgres:5432/whatsapp_saas
+      DATABASE_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
+      POSTGRES_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000
       S3_ENDPOINT: http://minio:9000

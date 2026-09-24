@@ -30,11 +30,17 @@ services:
       POSTGRES_DB: whatsapp_saas
       POSTGRES_USER: app_user
       POSTGRES_PASSWORD: verify_postgres_pw
+      # Password of the non-superuser runtime role created by the init script.
+      POSTGRES_RUNTIME_PASSWORD: verify_runtime_pw
     volumes:
       - verify_pg_data:/var/lib/postgresql/data
       # Migrations are applied explicitly (see infra/verify/run-verification.sh)
       # so the schema under test is the one in the repo, not a snapshot.
       - ../migrations:/migrations:ro
+      # Creates app_runtime (NOSUPERUSER NOBYPASSRLS) and tenant_lookup_owner.
+      # Without a non-superuser runtime role the RLS policies are bypassed by
+      # the bootstrap superuser and enforce nothing (audit finding H1).
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app_user -d whatsapp_saas"]
       interval: 3s
@@ -128,7 +134,7 @@ services:
       PORT: 3001
       NODE_ENV: production
       LOG_LEVEL: warn
-      DATABASE_URL: postgresql://app_user:verify_postgres_pw@postgres:5432/whatsapp_saas
+      DATABASE_URL: postgresql://app_runtime:verify_runtime_pw@postgres:5432/whatsapp_saas
       DATABASE_MIGRATION_URL: postgresql://app_user:verify_postgres_pw@postgres:5432/whatsapp_saas
       REDIS_URL: redis://tenant_api_user:verify_ta_pw@redis:6379/0
       JWT_SECRET: verify_jwt_secret_at_least_32_characters_long
@@ -177,7 +183,7 @@ services:
       META_APP_SECRET: test-app-secret
       META_VERIFY_TOKEN: test-verify-token
       REDIS_URL: redis://gateway_user:verify_gw_pw@redis:6379/0
-      POSTGRES_URL: postgresql://app_user:verify_postgres_pw@postgres:5432/whatsapp_saas
+      POSTGRES_URL: postgresql://app_runtime:verify_runtime_pw@postgres:5432/whatsapp_saas
       TENANT_CACHE_TTL_SECONDS: "300"
     depends_on:
       postgres:

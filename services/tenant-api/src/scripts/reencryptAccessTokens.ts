@@ -1,5 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import { loadConfig } from '../config.js';
+import { getPrismaClient, withTenantContext } from '../infrastructure/prisma/PrismaClient.js';
 import {
   decryptAccessToken,
   encryptAccessToken,
@@ -24,15 +24,19 @@ import {
 //   2. deploy, then run this script to rewrite every row onto k2
 //   3. drop MASTER_KEY_PREVIOUS / MASTER_KEY_PREVIOUS_ID and deploy again
 //
-// The script connects with DATABASE_MIGRATION_URL because it must enumerate
-// across tenants; that role is the BYPASSRLS migrator, not the runtime role.
+// The script connects with the ordinary runtime role (DATABASE_URL) and uses
+// the same RLS middleware as the service: it enumerates rows through the
+// SECURITY DEFINER function `list_bound_tenants()` (which returns identifiers
+// only) and then reads and rewrites each row under that tenant's own
+// `app.tenant_id` context. No elevated database role is required, and the
+// policy keeps applying to every access it makes.
+//
 // It is idempotent: rows already on the current key are left untouched.
 // ---------------------------------------------------------------------------
 
-interface Row {
-  id: string;
-  phoneNumberId: string | null;
-  accessToken: string | null;
+interface BoundTenant {
+  tenant_id: string;
+  phone_number_id: string;
 }
 
 async function main(): Promise<void> {
@@ -46,62 +50,63 @@ async function main(): Promise<void> {
   });
 
   const currentPrefix = `v2.${keys.current.id}.`;
-  const prisma = new PrismaClient({
-    datasources: { db: { url: config.DATABASE_MIGRATION_URL } },
-  });
+  const prisma = getPrismaClient();
 
   let migrated = 0;
   let alreadyCurrent = 0;
   const failures: string[] = [];
 
   try {
-    const rows = (await prisma.tenant.findMany({
-      where: { accessToken: { not: null } },
-      select: { id: true, phoneNumberId: true, accessToken: true },
-    })) as Row[];
+    const rows = await prisma.$queryRaw<BoundTenant[]>`
+      SELECT tenant_id, phone_number_id FROM list_bound_tenants()
+    `;
 
     console.log(
       `${dryRun ? '[dry-run] ' : ''}${rows.length} tenant(s) with a stored access token; ` +
         `current key id '${keys.current.id}'`,
     );
 
-    for (const row of rows) {
-      const label = `tenant ${row.id}`;
-      const envelope = row.accessToken;
+    for (const bound of rows) {
+      const tenantId = bound.tenant_id;
+      const phoneNumberId = bound.phone_number_id;
+      const label = `tenant ${tenantId}`;
 
-      if (!envelope) continue;
-      if (envelope.startsWith(currentPrefix)) {
-        alreadyCurrent += 1;
-        continue;
-      }
-      if (!row.phoneNumberId) {
-        // The phone number is part of the AEAD associated data, so a row without
-        // one cannot be re-bound. A token is only ever written together with it.
-        failures.push(`${label} has an access token but no phone_number_id`);
-        continue;
-      }
-
-      const format = isEncryptedTokenV2(envelope) ? 'v2 (older key id)' : 'v1 (legacy)';
-      try {
-        const plaintext = decryptAccessToken(envelope, keys, {
-          tenantId: row.id,
-          phoneNumberId: row.phoneNumberId,
+      // Every read and write happens under this tenant's own RLS context, so
+      // the policy applies to the script exactly as it does to a request.
+      await withTenantContext(tenantId, async () => {
+        const row = await prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { accessToken: true },
         });
-        const reencrypted = encryptAccessToken(plaintext, keys, {
-          tenantId: row.id,
-          phoneNumberId: row.phoneNumberId,
-        });
+        const envelope = row?.accessToken;
 
-        if (dryRun) {
-          console.log(`  would re-encrypt ${label} (${format})`);
-        } else {
-          await prisma.tenant.update({ where: { id: row.id }, data: { accessToken: reencrypted } });
-          console.log(`  re-encrypted ${label} (${format})`);
+        if (!envelope) return;
+        if (envelope.startsWith(currentPrefix)) {
+          alreadyCurrent += 1;
+          return;
         }
-        migrated += 1;
-      } catch (err) {
-        failures.push(`${label} (${format}): ${err instanceof Error ? err.message : String(err)}`);
-      }
+
+        const format = isEncryptedTokenV2(envelope) ? 'v2 (older key id)' : 'v1 (legacy)';
+        try {
+          const plaintext = decryptAccessToken(envelope, keys, { tenantId, phoneNumberId });
+          const reencrypted = encryptAccessToken(plaintext, keys, { tenantId, phoneNumberId });
+
+          if (dryRun) {
+            console.log(`  would re-encrypt ${label} (${format})`);
+          } else {
+            await prisma.tenant.update({
+              where: { id: tenantId },
+              data: { accessToken: reencrypted },
+            });
+            console.log(`  re-encrypted ${label} (${format})`);
+          }
+          migrated += 1;
+        } catch (err) {
+          failures.push(
+            `${label} (${format}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      });
     }
   } finally {
     await prisma.$disconnect();

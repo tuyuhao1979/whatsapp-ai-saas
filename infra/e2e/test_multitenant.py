@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -27,9 +28,31 @@ GATEWAY = os.environ.get("GATEWAY_URL", "http://127.0.0.1:13000")
 MOCK_META = os.environ.get("MOCK_META_URL", "http://127.0.0.1:18080")
 JWT_SECRET = os.environ.get("JWT_SECRET", "verify_jwt_secret_at_least_32_characters_long")
 META_APP_SECRET = os.environ.get("META_APP_SECRET", "test-app-secret")
+COMPOSE = ["docker", "compose", "-f", "infra/verify/docker-compose.verify.yml"]
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 PASSED: list[str] = []
 FAILED: list[str] = []
+
+
+def psql(sql: str, user: str = "app_runtime") -> str:
+    """Run SQL as the runtime role — the role the services actually connect as.
+
+    Section F asserts on what that role can see, so running the checks as the
+    bootstrap superuser would defeat the point (superusers bypass RLS).
+
+    `-q` matters for the multi-statement snippets below: without it psql prints
+    the `BEGIN` / `SET` / `COMMIT` command tags as extra lines, which would sit
+    either side of the value being asserted on.
+    """
+    result = subprocess.run(
+        [*COMPOSE, "exec", "-T", "postgres",
+         "psql", "-U", user, "-d", "whatsapp_saas", "-tAqc", sql],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"psql failed for {sql!r}: {result.stderr.strip()}")
+    return result.stdout.strip()
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
@@ -387,8 +410,74 @@ def main() -> int:
         f"HTTP {status} {body}",
     )
 
-    # -- F. conversation log isolation ------------------------------------
-    section("F. conversation log isolation")
+    # -- F. RLS on `tenants` itself (audit finding H1) ---------------------
+    section("F. Row Level Security on tenants (as the runtime role)")
+
+    runtime = psql(
+        "SELECT rolsuper::int || ',' || rolbypassrls::int FROM pg_roles WHERE rolname = current_user"
+    )
+    check(
+        "the runtime role is neither superuser nor BYPASSRLS",
+        runtime == "0,0",
+        f"rolsuper,rolbypassrls = {runtime} (0,0 expected)",
+    )
+
+    # Before migration 007 this returned every tenant in the database: `tenants`
+    # had no RLS at all, so tenant isolation rested on the application always
+    # remembering its WHERE clause.
+    visible = psql("SELECT count(*) FROM tenants")
+    check("no tenant context sees no tenants", visible == "0", f"count={visible}")
+
+    for label, tenant_id in (("A", tenant_a), ("B", tenant_b)):
+        own = psql(
+            "BEGIN; SELECT set_config('app.tenant_id',"
+            f"'{tenant_id}', true); SELECT count(*) FROM tenants WHERE id = '{tenant_id}'; COMMIT;"
+        ).splitlines()
+        check(
+            f"tenant {label} sees its own row",
+            own[-1] == "1",
+            f"lines={own}",
+        )
+        others = psql(
+            "BEGIN; SELECT set_config('app.tenant_id',"
+            f"'{tenant_id}', true); SELECT count(*) FROM tenants WHERE id <> '{tenant_id}'; COMMIT;"
+        ).splitlines()
+        check(f"tenant {label} sees no other tenant row", others[-1] == "0", f"lines={others}")
+
+    # WITH CHECK must reject a write aimed at someone else's row.
+    hijack = subprocess.run(
+        [*COMPOSE, "exec", "-T", "postgres", "psql", "-U", "app_runtime", "-d", "whatsapp_saas",
+         "-tAc",
+         "BEGIN; SELECT set_config('app.tenant_id',"
+         f"'{tenant_a}', true); "
+         "INSERT INTO tenants (id, name, slug) VALUES "
+         f"('{tenant_b}', 'hijack', 'hijack-{run_id}'); COMMIT;"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    check(
+        "inserting a row under another tenant id is refused",
+        hijack.returncode != 0 and "row-level security" in (hijack.stderr or ""),
+        (hijack.stderr or hijack.stdout).strip()[-200:],
+    )
+
+    # The two sanctioned lookups must keep working: they are what login and
+    # webhook routing depend on (exercised end to end in sections A and E).
+    slug_a = psql(f"SELECT slug FROM tenants WHERE id = '{tenant_a}'", user="app_user")
+    check(
+        "login's slug lookup resolves a tenant without a context",
+        psql(f"SELECT tenant_id FROM lookup_tenant_by_slug('{slug_a}')") == tenant_a,
+        f"slug={slug_a}",
+    )
+    connection = call("GET", f"{TENANT_API}/api/v1/meta/connection", token=token_c)
+    bound_phone = ((connection[1].get("data") or {}).get("phoneNumberId")) if connection[0] == 200 else None
+    check(
+        "the phone-number lookup resolves the owning tenant",
+        bound_phone is not None and psql(f"SELECT tenant_id_for_phone('{bound_phone}')") is not None,
+        f"phone={bound_phone}",
+    )
+
+    # -- G. conversation log isolation -------------------------------------
+    section("G. conversation log isolation")
     status, body = call("GET", f"{TENANT_API}/api/v1/conversations", token=token_b)
     rows = body.get("data") or {} if status == 200 else {}
     check(

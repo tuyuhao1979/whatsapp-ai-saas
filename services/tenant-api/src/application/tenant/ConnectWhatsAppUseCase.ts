@@ -76,9 +76,11 @@ export class ConnectWhatsAppUseCase {
 
     // 2. Refuse to take a number another tenant already holds. The DB has a
     //    UNIQUE constraint, but checking first yields a clear 409 instead of a
-    //    raw constraint violation surfacing as a 500.
-    const existing = await this.tenantRepo.findByPhoneNumberId(input.phoneNumberId);
-    if (existing && existing.id !== tenantId) {
+    //    raw constraint violation surfacing as a 500. This is a cross-tenant
+    //    read on purpose, so it goes through the SECURITY DEFINER lookup that
+    //    returns the owning tenant id and nothing else.
+    const ownerTenantId = await this.tenantRepo.findTenantIdByPhoneNumberId(input.phoneNumberId);
+    if (ownerTenantId && ownerTenantId !== tenantId) {
       throw new ConflictError(
         `Phone number ${input.phoneNumberId} is already connected to another account`,
       );
