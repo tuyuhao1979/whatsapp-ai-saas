@@ -14,6 +14,7 @@ _BASE_ENV = {
     "REDIS_URL": "redis://localhost:6379/0",
     "CHROMADB_HOST": "localhost",
     "CHROMADB_PORT": "8000",
+    "CHROMA_AUTH_TOKEN": "test-chroma-token",
     "OPENAI_API_KEY": "sk-test",
     "INTERNAL_TOKEN": "internal-token",
     "MASTER_KEY": "0" * 64,
@@ -78,3 +79,20 @@ def test_meta_api_base_and_body_storage_are_configurable(
     cfg = load_config(env)
     assert cfg.meta_api_base == "https://graph.facebook.com/v21.0"  # trailing / trimmed
     assert cfg.store_message_body is True
+
+
+def test_chroma_auth_token_is_carried_into_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _env(DATABASE_URL="postgresql://x/y", CHROMA_AUTH_TOKEN="tok")
+    monkeypatch.setattr("os.environ", env)
+    assert load_config(env).chromadb_auth_token == "tok"
+
+
+def test_exits_without_a_chroma_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """H3: ChromaDB requires authentication, so a deployment that forgets the
+    token must stop at startup rather than serve an unauthenticated vector store
+    (or, worse, start and have every RAG lookup come back empty)."""
+    env = _env(DATABASE_URL="postgresql://x/y")
+    del env["CHROMA_AUTH_TOKEN"]
+    monkeypatch.setattr("os.environ", env)
+    with pytest.raises(SystemExit):
+        load_config(env)

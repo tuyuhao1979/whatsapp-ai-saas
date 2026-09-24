@@ -8,7 +8,14 @@ version = "0.1.0"
 description = "RAG document indexer service for the WhatsApp AI SaaS platform"
 requires-python = ">=3.12"
 dependencies = [
-    "chromadb>=0.5",
+    # Pinned to the ChromaDB server image in infra/docker-compose.yml, not
+    # `>=0.5`: an open-ended constraint resolved to chromadb 1.x, whose
+    # create-collection payload the deployed 0.5.23 server rejects with
+    #   Exception {"error":"KeyError('_type')"}
+    # so the indexer could not create a collection and every document failed to
+    # index. The client major tracks the server image; move both together.
+    # tests/unit/test_chroma_version_alignment.py guards the pair.
+    "chromadb==0.5.23",
     "sentence-transformers>=2.7",
     "redis>=5.0",
     "minio>=7.2",

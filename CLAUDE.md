@@ -144,6 +144,7 @@ When no active flow matches an inbound message, flow-engine falls back to a RAG 
 - **JWT HS256** for tenant-api auth (ADR 006). Tokens are 12 h by default.
 - **AES-256-GCM** encryption for the WhatsApp access token stored in `tenants.access_token`. The `MASTER_KEY` env var is the 32-byte key; decryption happens in flow-engine before calling Meta Send API.
 - **argon2id** for password hashing in tenant-api.
+- **ChromaDB token authentication** (`CHROMA_AUTH_TOKEN`). The server runs with `CHROMA_SERVER_AUTHN_PROVIDER=…TokenAuthenticationServerProvider` and the two Python services send the token as a bearer header; `/api/v1/heartbeat` stays exempt for the healthcheck. The chromadb client is pinned with `==` to the server image tag in `infra/docker-compose.yml` (a client/server major mismatch silently broke all RAG reads and writes).
 
 ### Environment
 

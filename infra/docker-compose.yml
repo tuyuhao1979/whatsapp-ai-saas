@@ -101,10 +101,27 @@ services:
       - "8000:8000"
     environment:
       ANONYMIZED_TELEMETRY: "false"
-      CHROMA_SERVER_AUTHN_CREDENTIALS: ${CHROMA_SERVER_AUTHN_CREDENTIALS:-}
+      # Token authentication (audit finding H3). Without a provider configured,
+      # CHROMA_SERVER_AUTHN_CREDENTIALS is inert decoration: the shipped compose
+      # file set it to `:-` (empty by default) and every request was accepted
+      # anonymously, so any process that could resolve this host:port could read
+      # and write every tenant's knowledge base.
+      #
+      # The token is required rather than defaulted. Turning the provider on
+      # with empty credentials does not fall back to "no auth" — the image
+      # exits at startup with
+      #   ValueError: No credentials file or credentials found in
+      #   [chroma_server_authn_credentials]
+      # so `docker compose up` must fail with the message below instead of
+      # silently coming up unauthenticated.
+      CHROMA_SERVER_AUTHN_PROVIDER: chromadb.auth.token_authn.TokenAuthenticationServerProvider
+      CHROMA_SERVER_AUTHN_CREDENTIALS: ${CHROMA_AUTH_TOKEN:?CHROMA_AUTH_TOKEN must be set (ChromaDB requires authentication -- audit finding H3)}
     volumes:
       - chroma_data:/chroma/chroma
     healthcheck:
+      # `/api/v1/heartbeat` is deliberately exempt from authentication in
+      # chromadb 0.5.23 (verified against the image), so this stays a real
+      # liveness probe rather than a token holder.
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/heartbeat || exit 1"]
       interval: 10s
       timeout: 5s
@@ -266,6 +283,7 @@ services:
       POSTGRES_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000
+      CHROMA_AUTH_TOKEN: ${CHROMA_AUTH_TOKEN:?CHROMA_AUTH_TOKEN must be set (ChromaDB requires authentication -- audit finding H3)}
       META_API_BASE: ${META_API_BASE:-https://graph.facebook.com/v21.0}
       META_APP_SECRET: ${META_APP_SECRET}
       MASTER_KEY: ${MASTER_KEY}
@@ -384,6 +402,7 @@ services:
       POSTGRES_URL: postgresql://app_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/whatsapp_saas
       CHROMADB_HOST: chromadb
       CHROMADB_PORT: 8000
+      CHROMA_AUTH_TOKEN: ${CHROMA_AUTH_TOKEN:?CHROMA_AUTH_TOKEN must be set (ChromaDB requires authentication -- audit finding H3)}
       S3_ENDPOINT: http://minio:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET_KB: ${S3_BUCKET_KB:-kb-documents}

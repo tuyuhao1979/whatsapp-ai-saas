@@ -117,6 +117,7 @@ def main() -> None:
     vector_store = ChromaRetriever(
         host=cfg.chromadb_host,
         port=cfg.chromadb_port,
+        auth_token=cfg.chromadb_auth_token,
         embedder=embedder,
     )
     llm = LangChainLLMPort(

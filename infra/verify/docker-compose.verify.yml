@@ -19,6 +19,7 @@ volumes:
   verify_pg_data:
   verify_redis_data:
   verify_minio_data:
+  verify_chroma_data:
 
 services:
   postgres:
@@ -70,6 +71,37 @@ services:
       - ../redis:/usr/local/etc/redis
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "verify_default_pw", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # ChromaDB, with the token authentication the production stack enables
+  # (audit finding H3).
+  #
+  # This stack previously had no vector store at all, so the one claim the
+  # shipped compose made about ChromaDB — a set of CHROMA_SERVER_AUTHN_* values —
+  # was never exercised. It was also inert: without a provider configured the
+  # credentials are ignored and every request is anonymous. Running the real
+  # image here is what makes "unauthenticated access is refused" testable.
+  #
+  # The token is a throwaway like every other secret in this file (see the head
+  # of the stack). It is read from the container's own environment by
+  # infra/e2e/verify_chroma_auth.py, so it is never passed on a command line.
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18000:8000"
+    environment:
+      ANONYMIZED_TELEMETRY: "false"
+      CHROMA_SERVER_AUTHN_PROVIDER: chromadb.auth.token_authn.TokenAuthenticationServerProvider
+      CHROMA_SERVER_AUTHN_CREDENTIALS: verify_chroma_auth_token
+    volumes:
+      - verify_chroma_data:/chroma/chroma
+    healthcheck:
+      # The heartbeat route is exempt from authentication in 0.5.23, so this
+      # still reports liveness without holding the token.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/heartbeat || exit 1"]
       interval: 3s
       timeout: 3s
       retries: 20

@@ -9,6 +9,7 @@ import logging
 from typing import Any, cast
 
 import chromadb
+from chromadb.api.types import IncludeEnum
 
 from flow_engine.domain.ports import IVectorStore
 
@@ -16,8 +17,19 @@ logger = logging.getLogger(__name__)
 
 
 class ChromaRetriever(IVectorStore):
-    def __init__(self, host: str, port: int, embedder: Any) -> None:
-        self._client = chromadb.HttpClient(host=host, port=port)
+    def __init__(self, host: str, port: int, auth_token: str, embedder: Any) -> None:
+        # ChromaDB is started with token authentication (audit finding H3), so
+        # every request has to carry the bearer token. The client performs an
+        # authenticated identity call while being constructed, so a missing or
+        # wrong token raises from inside the SDK — this guard turns that into a
+        # named error naming the cause, before the first query.
+        if not auth_token:
+            raise ValueError("ChromaRetriever requires a non-empty auth_token")
+        self._client = chromadb.HttpClient(
+            host=host,
+            port=port,
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
         self._embedder = embedder  # same LocalEmbedder as rag-indexer
 
     def query(
@@ -51,7 +63,10 @@ class ChromaRetriever(IVectorStore):
                 # value the HTTP API accepts.
                 query_embeddings=cast(Any, [query_embedding]),
                 n_results=min(top_k, 20),
-                include=["documents", "distances"],
+                # IncludeEnum, not the equivalent strings: chromadb's own stubs
+                # type this as list[IncludeEnum] (the values are str-backed, so
+                # both work at runtime, but only the enum type-checks).
+                include=[IncludeEnum.documents, IncludeEnum.distances],
             )
         except Exception:
             logger.exception(

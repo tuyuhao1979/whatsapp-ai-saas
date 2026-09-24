@@ -17,6 +17,18 @@ jobs:
     defaults:
       run:
         working-directory: services/flow-engine
+    # A real, authenticated ChromaDB for tests/integration/: the unit tests can
+    # assert the bearer header is passed, but only a server can show it is
+    # accepted and that everything else is refused (audit finding H3).
+    services:
+      chromadb:
+        image: chromadb/chroma:0.5.23
+        env:
+          ANONYMIZED_TELEMETRY: "false"
+          CHROMA_SERVER_AUTHN_PROVIDER: chromadb.auth.token_authn.TokenAuthenticationServerProvider
+          CHROMA_SERVER_AUTHN_CREDENTIALS: ci-chroma-auth-token
+        ports:
+          - 8000:8000
 
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +50,12 @@ jobs:
         run: mypy flow_engine/ --ignore-missing-imports
 
       - name: Test
-        run: pytest tests/unit/ -v --tb=short
+        env:
+          # tests/integration/ skips when these are unset, so the same command
+          # works outside CI.
+          CHROMA_INTEGRATION_URL: http://127.0.0.1:8000
+          CHROMA_AUTH_TOKEN: ci-chroma-auth-token
+        run: pytest tests/ -v --tb=short
 
   rag-indexer:
     name: rag-indexer — lint + typecheck + test
@@ -46,6 +63,15 @@ jobs:
     defaults:
       run:
         working-directory: services/rag-indexer
+    services:
+      chromadb:
+        image: chromadb/chroma:0.5.23
+        env:
+          ANONYMIZED_TELEMETRY: "false"
+          CHROMA_SERVER_AUTHN_PROVIDER: chromadb.auth.token_authn.TokenAuthenticationServerProvider
+          CHROMA_SERVER_AUTHN_CREDENTIALS: ci-chroma-auth-token
+        ports:
+          - 8000:8000
 
     steps:
       - uses: actions/checkout@v4
@@ -67,4 +93,7 @@ jobs:
         run: mypy rag_indexer/ --ignore-missing-imports
 
       - name: Test
-        run: pytest tests/unit/ -v --tb=short
+        env:
+          CHROMA_INTEGRATION_URL: http://127.0.0.1:8000
+          CHROMA_AUTH_TOKEN: ci-chroma-auth-token
+        run: pytest tests/ -v --tb=short

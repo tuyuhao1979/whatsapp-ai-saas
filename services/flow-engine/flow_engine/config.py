@@ -13,6 +13,11 @@ _REQUIRED = [
     "REDIS_URL",
     "CHROMADB_HOST",
     "CHROMADB_PORT",
+    # ChromaDB runs with token authentication (audit finding H3). Required, not
+    # optional: an unauthenticated vector store is reachable by anything that
+    # can resolve its port, and it holds every tenant's knowledge base. A
+    # deployment must fail loudly rather than come up with the token unset.
+    "CHROMA_AUTH_TOKEN",
     "OPENAI_API_KEY",
     "INTERNAL_TOKEN",
     "MASTER_KEY",
@@ -39,6 +44,7 @@ class Config:
     database_url: str
     chromadb_host: str
     chromadb_port: int
+    chromadb_auth_token: str  # bearer token for ChromaDB token auth
     openai_api_key: str
     openai_model: str
     internal_token: str
@@ -82,6 +88,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         database_url=database_url,
         chromadb_host=source["CHROMADB_HOST"],
         chromadb_port=int(source["CHROMADB_PORT"]),
+        chromadb_auth_token=source["CHROMA_AUTH_TOKEN"],
         openai_api_key=source["OPENAI_API_KEY"],
         openai_model=source.get("OPENAI_MODEL", "gpt-4o-mini"),
         internal_token=source["INTERNAL_TOKEN"],

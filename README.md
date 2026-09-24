@@ -51,7 +51,7 @@
 | LangChain | 0.3.x | LLM provider abstraction; history trimming; retriever composition |
 | PostgreSQL | 16 | Row Level Security for multi-tenant isolation; JSONB for flow graphs |
 | Redis | 7 | Streams (async queue) + sessions + tenant lookup cache; AOF durability |
-| ChromaDB | 0.5 | Per-tenant vector collections; simple HTTP interface; no schema migrations |
+| ChromaDB | 0.5 | Per-tenant vector collections; bearer-token authentication; no schema migrations |
 | MinIO | latest | S3-compatible local storage for KB documents; replaced by S3 in prod |
 | Caddy | 2 | Automatic HTTPS (Let's Encrypt); reverse proxy to gateway and tenant-api |
 | sentence-transformers | 2.7+ | Local CPU embeddings (all-MiniLM-L6-v2); zero marginal cost |
@@ -125,7 +125,8 @@ Copy `infra/.env.example` to `infra/.env` and fill in the values below.
 | `DATABASE_URL` | tenant-api, flow-engine, gateway, rag-indexer | PostgreSQL connection string (app_runtime, no SUPERUSER / BYPASSRLS, so RLS applies) | YES | `postgresql://app_runtime:pass@postgres:5432/saas` |
 | `DATABASE_MIGRATION_URL` | tenant-api | Migration connection string (app_user, owns the schema) | YES | `postgresql://app_user:pass@postgres:5432/saas` |
 | `REDIS_URL` | all services | Redis connection string | YES | `redis://:pass@redis:6379/0` |
-| `CHROMA_HOST` | flow-engine, rag-indexer | ChromaDB service hostname | YES | `chromadb` |
+| `CHROMADB_HOST` | flow-engine, rag-indexer | ChromaDB service hostname | YES | `chromadb` |
+| `CHROMA_AUTH_TOKEN` | chromadb, flow-engine, rag-indexer | Bearer token for ChromaDB; the server refuses to start without it | YES | `openssl rand -hex 32` |
 | `S3_ENDPOINT` | tenant-api, rag-indexer | MinIO/S3 endpoint | YES | `http://minio:9000` |
 | `S3_BUCKET_KB` | tenant-api, rag-indexer | Bucket for knowledge base documents | YES | `kb-documents` |
 | `S3_ACCESS_KEY` | tenant-api, rag-indexer | MinIO/S3 access key | YES | `minioadmin` |

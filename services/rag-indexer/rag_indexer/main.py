@@ -76,6 +76,10 @@ _REQUIRED_VARS = [
     "S3_BUCKET_KB",
     "CHROMADB_HOST",
     "CHROMADB_PORT",
+    # ChromaDB runs with token authentication (audit finding H3): an
+    # unauthenticated vector store is reachable by anything that can resolve its
+    # port and holds every tenant's knowledge base.
+    "CHROMA_AUTH_TOKEN",
 ]
 
 # Accept either name; docker-compose injects POSTGRES_URL for this service
@@ -167,6 +171,7 @@ def main() -> None:
     vector_store = ChromaVectorStore(
         host=config["CHROMADB_HOST"],
         port=int(config["CHROMADB_PORT"]),
+        auth_token=config["CHROMA_AUTH_TOKEN"],
     )
 
     status_repo = PostgresStatusRepo(connection_string=config["DATABASE_URL"])

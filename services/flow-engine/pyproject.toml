@@ -12,7 +12,15 @@ dependencies = [
     "uvicorn>=0.29",
     "redis>=5.0",
     "psycopg2-binary>=2.9",
-    "chromadb>=0.5",
+    # Pinned to the server image in infra/docker-compose.yml, not `>=0.5`.
+    # An open-ended constraint resolved to chromadb 1.x, whose client speaks a
+    # collection-create payload the deployed 0.5.23 server rejects with
+    #   Exception {"error":"KeyError('_type')"}
+    # While that went unnoticed, every RAG read and write failed: the indexer
+    # could not create a collection and the flow engine could never find one.
+    # The client major tracks the server image; move both together.
+    # tests/unit/test_chroma_version_alignment.py guards the pair.
+    "chromadb==0.5.23",
     "cryptography>=42.0",
     "sentence-transformers>=2.7",
     "langchain>=0.3,<0.4",

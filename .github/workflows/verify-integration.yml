@@ -58,9 +58,11 @@ jobs:
       # Hub anonymous-pull denials intermittently; without this the whole job
       # dies on a registry hiccup rather than on a real failure. The stack's
       # minio service is behind the `storage` profile and is not started here.
+      # chromadb is pulled here because the stack now starts it: the ChromaDB
+      # authentication assertions need a real server (audit finding H3).
       - name: Pre-pull base images
         run: |
-          for image in postgres:16-alpine redis:7-alpine python:3.12-alpine; do
+          for image in postgres:16-alpine redis:7-alpine python:3.12-alpine chromadb/chroma:0.5.23; do
             for attempt in 1 2 3; do
               if docker pull "$image"; then break; fi
               echo "pull failed for $image (attempt $attempt), retrying in $((attempt * 10))s"
@@ -83,6 +85,14 @@ jobs:
       # keyed per tenant, and migratable off a legacy v1 ciphertext.
       - name: Access-token envelope (row binding, key ids, v1 -> v2 migration)
         run: python3 infra/e2e/verify_token_crypto.py
+
+      # Covers audit finding H3: the vector store must refuse anonymous access.
+      # The stack had no ChromaDB at all before this, so the authentication the
+      # production compose claimed to configure was never actually exercised —
+      # and in fact was inert, since the credentials are ignored without a
+      # provider.
+      - name: ChromaDB authentication (anonymous refused, token accepted)
+        run: python3 infra/e2e/verify_chroma_auth.py
 
       - name: Schemathesis — no 5xx, invalid input rejected
         run: |

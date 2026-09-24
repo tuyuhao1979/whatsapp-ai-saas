@@ -83,12 +83,18 @@ XPENDING flow-engine:<tenant_id> flow-engine-workers - + 10
 
 ### Accessing ChromaDB directly
 
+ChromaDB requires the bearer token (`CHROMA_AUTH_TOKEN` in `infra/.env`). Every
+route except `/api/v1/heartbeat` answers `403` without it — the heartbeat is
+what the compose healthcheck polls, so liveness can still be checked
+anonymously.
+
 ```bash
 # ChromaDB HTTP API on port 8000 (internal network) or 18000 (host, if mapped in docker-compose)
-curl http://localhost:18000/api/v1/collections
+curl -H "Authorization: Bearer <CHROMA_AUTH_TOKEN>" http://localhost:18000/api/v1/collections
 
 # Count vectors in a tenant's collection
-curl "http://localhost:18000/api/v1/collections/kb_<tenant_id_no_hyphens>/count"
+curl -H "Authorization: Bearer <CHROMA_AUTH_TOKEN>" \
+  "http://localhost:18000/api/v1/collections/tenant_<tenant_id_no_hyphens>/count"
 ```
 
 ---

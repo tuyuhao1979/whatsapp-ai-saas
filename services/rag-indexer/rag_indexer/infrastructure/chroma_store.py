@@ -25,8 +25,19 @@ def _collection_name(tenant_id: str) -> str:
 class ChromaVectorStore(IVectorStore):
     """Stores and retrieves document chunk embeddings via ChromaDB HTTP API."""
 
-    def __init__(self, host: str, port: int) -> None:
-        self._client = chromadb.HttpClient(host=host, port=port)
+    def __init__(self, host: str, port: int, auth_token: str) -> None:
+        # ChromaDB runs with token authentication (audit finding H3). The client
+        # performs an authenticated identity call while being constructed, so a
+        # missing or wrong token raises from inside the SDK — this guard turns
+        # that into a named error naming the cause, before the consumer loop
+        # starts and reports it as a per-document failure.
+        if not auth_token:
+            raise ValueError("ChromaVectorStore requires a non-empty auth_token")
+        self._client = chromadb.HttpClient(
+            host=host,
+            port=port,
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
 
     def upsert(self, tenant_id: str, chunks: list[DocumentChunk]) -> None:
         """Upsert all chunks into the tenant's ChromaDB collection."""
