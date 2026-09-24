@@ -6,7 +6,7 @@ Embedder model: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import chromadb
 
@@ -47,7 +47,9 @@ class ChromaRetriever(IVectorStore):
 
         try:
             results = collection.query(
-                query_embeddings=[query_embedding],
+                # Same union-vs-list mismatch as rag-indexer's upsert: cast the
+                # value the HTTP API accepts.
+                query_embeddings=cast(Any, [query_embedding]),
                 n_results=min(top_k, 20),
                 include=["documents", "distances"],
             )
@@ -58,8 +60,15 @@ class ChromaRetriever(IVectorStore):
             )
             return []
 
-        docs: list[str] = results["documents"][0] if results.get("documents") else []
-        distances: list[float] = results["distances"][0] if results.get("distances") else []
+        # Bind to locals first: mypy cannot narrow a repeated subscript of a
+        # TypedDict whose value is `list[...] | None`, so the previous
+        # `results["documents"][0] if results.get("documents") else []` was an
+        # error -- and would also have raised TypeError if the key were present
+        # but null.
+        raw_documents = results["documents"]
+        raw_distances = results["distances"]
+        docs: list[str] = list(raw_documents[0]) if raw_documents else []
+        distances: list[float] = list(raw_distances[0]) if raw_distances else []
 
         # Convert cosine distance [0, 2] to similarity score [0, 1]
         return [

@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from flow_engine.domain.ports import ILLMPort
 
@@ -28,9 +29,16 @@ class LangChainLLMPort(ILLMPort):
         model: str = "gpt-4o-mini",
     ) -> None:
         self._llm = ChatOpenAI(
-            api_key=openai_api_key,
+            # SecretStr is what the client expects; passing a bare str is
+            # flagged by the type checker and would risk the key reaching a log
+            # formatter through a plain-str repr.
+            api_key=SecretStr(openai_api_key),
             model=model,
-            max_tokens=500,      # default; overridden per call
+            # Provider parameters go through model_kwargs: the `max_tokens=`
+            # constructor argument is not part of the current langchain-openai
+            # stubs, while model_kwargs is typed and forwarded to the OpenAI
+            # client on every version this service supports.
+            model_kwargs={"max_tokens": 500},  # default; overridden per call
             temperature=0.3,
         )
 
@@ -69,11 +77,18 @@ class LangChainLLMPort(ILLMPort):
 
         messages.append(HumanMessage(content=user_message))
 
-        llm = self._llm.with_config({"max_tokens": effective_max})
+        # `bind` forwards the parameter to the model call, which is what the
+        # per-call cap is for. The previous with_config({"max_tokens": ...}) only
+        # added a run-config entry, which is not a model parameter, so the cap
+        # silently had no effect. bind is also what the stubs accept.
+        llm = self._llm.bind(max_tokens=effective_max)
         response = llm.invoke(messages)
 
         tokens: int = 0
-        if response.usage_metadata:
-            tokens = response.usage_metadata.get("total_tokens", 0)
+        # usage_metadata is present on AIMessage but not on the BaseMessage the
+        # stub declares for invoke(), so it is read defensively.
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            tokens = usage.get("total_tokens", 0)
 
         return str(response.content), tokens

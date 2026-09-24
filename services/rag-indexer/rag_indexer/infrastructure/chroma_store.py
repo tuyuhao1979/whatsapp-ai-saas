@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import chromadb
 
@@ -40,7 +41,11 @@ class ChromaVectorStore(IVectorStore):
 
         collection.upsert(
             ids=[c.id for c in chunks],
-            embeddings=[c.embedding for c in chunks],
+            # chromadb's stub types this as a union of numpy arrays and
+            # sequences of numbers. A list of float lists is accepted at runtime
+            # (it is what the HTTP API takes) but mypy cannot match the union,
+            # so the value is cast rather than narrowed.
+            embeddings=cast(Any, [c.embedding for c in chunks]),
             documents=[c.text for c in chunks],
             metadatas=[
                 {
