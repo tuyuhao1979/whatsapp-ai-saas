@@ -6,6 +6,7 @@ import {
   embeddedSignupCompleteBodySchema,
   formatIssues,
   loginBodySchema,
+  nulPathIn,
   registerBodySchema,
   requireUuidParam,
   updateTenantBodySchema,
@@ -213,4 +214,44 @@ describe('requireUuidParam', () => {
       expect(captured.body).toMatchObject({ error: { code: 'INVALID_REQUEST' } });
     },
   );
+});
+
+// PostgreSQL cannot store NUL (U+0000) in `text` or `jsonb`, and JSON allows
+// `\u0000` anywhere a string is accepted, so this cannot be expressed as a Zod
+// constraint. Schemathesis found the gap by putting one in `tenant_slug` on
+// POST /auth/login and inside a flow's `trigger`; both answered 500.
+describe('nulPathIn', () => {
+  it('passes a clean body', () => {
+    expect(nulPathIn('body', { name: 'Acme', nodes: [{ node_key: 'start' }] })).toBeNull();
+  });
+
+  it('reports the path of a NUL at the top level', () => {
+    expect(nulPathIn('body', { tenant_slug: 'acme\u0000' })).toBe('body.tenant_slug');
+  });
+
+  it('finds a NUL nested inside an unconstrained object', () => {
+    expect(nulPathIn('body', { trigger: { keywords: ['ok', '\u0000'] } })).toBe(
+      'body.trigger.keywords[1]',
+    );
+  });
+
+  it('finds a NUL in an object key', () => {
+    expect(nulPathIn('body', { 'a\u0000b': 1 })).toBe('body.a\u0000b');
+  });
+
+  it('ignores non-string leaves', () => {
+    expect(nulPathIn('body', { n: 1, b: true, x: null, a: [1, 2] })).toBeNull();
+  });
+
+  it('caps the reported path', () => {
+    const reported = nulPathIn('body', { [`k${'x'.repeat(500)}`]: '\u0000' });
+    expect(reported).not.toBeNull();
+    expect((reported as string).length).toBeLessThanOrEqual(203);
+  });
+
+  it('does not overflow the stack on deeply nested input', () => {
+    let deep: unknown = '\u0000';
+    for (let i = 0; i < 100_000; i += 1) deep = [deep];
+    expect(nulPathIn('body', deep)).not.toBeNull();
+  });
 });

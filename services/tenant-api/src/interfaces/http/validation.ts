@@ -27,6 +27,54 @@ export function formatIssues(error: z.ZodError): string[] {
   });
 }
 
+/** Longest path echoed back when a NUL character is rejected. */
+const MAX_REPORTED_PATH = 200;
+
+/**
+ * Path of the first string containing NUL (U+0000) under `value`, or null.
+ *
+ * PostgreSQL cannot represent NUL in either `text` or `jsonb`; a parameter
+ * carrying one is rejected with `invalid byte sequence for encoding "UTF8":
+ * 0x00` (text) or `unsupported Unicode escape sequence` (jsonb). Both surfaced
+ * as a 500 for what is plainly a malformed request — Schemathesis found it in
+ * `tenant_slug` on `POST /auth/login` and nested inside a flow's `trigger`.
+ * JSON permits `\u0000`, so no Zod shape check can rule it out on its own.
+ *
+ * Iterative rather than recursive: the input is attacker-controlled, and a
+ * deeply nested body would otherwise turn the guard itself into a crash.
+ */
+export function nulPathIn(root: string, value: unknown): string | null {
+  const stack: Array<{ node: unknown; path: string }> = [{ node: value, path: root }];
+
+  while (stack.length > 0) {
+    const { node, path } = stack.pop() as { node: unknown; path: string };
+
+    if (typeof node === 'string') {
+      if (node.includes('\u0000')) {
+        return path.length > MAX_REPORTED_PATH ? `${path.slice(0, MAX_REPORTED_PATH)}...` : path;
+      }
+    } else if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i += 1) {
+        stack.push({ node: node[i], path: `${path}[${i}]` });
+      }
+    } else if (typeof node === 'object' && node !== null) {
+      for (const [key, child] of Object.entries(node)) {
+        // Keys are checked too: `jsonb` cannot hold a NUL in a key either, and
+        // `trigger`/`config` are stored as jsonb.
+        const childPath = `${path}.${key}`;
+        if (key.includes('\u0000')) {
+          return childPath.length > MAX_REPORTED_PATH
+            ? `${childPath.slice(0, MAX_REPORTED_PATH)}...`
+            : childPath;
+        }
+        stack.push({ node: child, path: childPath });
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * RFC 3339 date-time, matching the contract's `format: date-time`.
  *

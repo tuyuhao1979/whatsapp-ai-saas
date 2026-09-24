@@ -43,7 +43,8 @@ import { flowsRoutes } from './interfaces/http/routes/flows.routes.js';
 import { kbRoutes } from './interfaces/http/routes/kb.routes.js';
 import { conversationsRoutes } from './interfaces/http/routes/conversations.routes.js';
 import { dryrunRoutes } from './interfaces/http/routes/dryrun.routes.js';
-import { formatIssues } from './interfaces/http/validation.js';
+import { formatIssues, nulPathIn } from './interfaces/http/validation.js';
+import { invalidRequest } from './interfaces/http/reply.js';
 import { masterKeysFromConfig } from './application/tenant/encryption.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -170,6 +171,22 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ---------------------------------------------------------------------------
   // Routes
   // ---------------------------------------------------------------------------
+  // Registered before the routes so it applies to all of them: a NUL character
+  // in any string the caller sends is a bad request, not a server fault.
+  // PostgreSQL rejects NUL in both `text` and `jsonb`, so without this the
+  // failure surfaced as a 500 from deep inside the query layer (Schemathesis
+  // hit it in `tenant_slug` and nested inside a flow's `trigger`).
+  app.addHook('preValidation', async (request, reply) => {
+    const offending =
+      nulPathIn('body', request.body) ??
+      nulPathIn('query', request.query) ??
+      nulPathIn('params', request.params);
+
+    if (offending !== null) {
+      return invalidRequest(reply, [`${offending}: NUL (U+0000) is not allowed`]);
+    }
+  });
+
   await app.register(
     async (api) => {
       await api.register(authRoutes, {
